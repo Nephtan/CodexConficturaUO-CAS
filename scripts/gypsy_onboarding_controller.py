@@ -37,6 +37,7 @@ from confictura_bot.safe_api import safe_click_object
 from confictura_bot.safe_api import safe_wait_for_context
 from confictura_bot.safe_api import safe_wait_for_gump_any
 from confictura_bot.safe_api import safe_wait_for_journal_any
+from confictura_bot.safe_api import safe_reply_gump
 from confictura_bot.telemetry import Telemetry
 from confictura_bot.gump_ids import gump_hex
 from confictura_bot.gump_ids import resolve_gump_id
@@ -434,6 +435,45 @@ class StepExecutorState(State):
         if gump_result.get("status") == "matched":
             Pause(runtime_cfg.get("action_settle_ms", 250))
             return True
+
+        if bool(rule.get("allow_any_open_reply", False)):
+            fallback_button_id = int(rule.get("button_id", 0))
+            fallback_switches = rule.get("switches", [])
+            fallback_text_entries = rule.get("text_entries", {})
+
+            Telemetry.warn(step_name, "Attempting any-open gump reply fallback by policy", {
+                "rule": rule.get("name", ""),
+                "button_id": fallback_button_id,
+                "expected_gump_id": gump_hex(expected_id),
+                "saw_packet": saw_packet,
+                "gump_open": gump_open
+            })
+
+            fallback_ok = False
+            try:
+                fallback_ok = safe_reply_gump(
+                    ctx,
+                    step_name,
+                    0,
+                    fallback_button_id,
+                    0,
+                    fallback_switches,
+                    fallback_text_entries
+                )
+            except Exception as ex:
+                fallback_ok = False
+                Telemetry.warn(step_name, "Any-open gump reply fallback threw exception", {
+                    "exception": str(ex),
+                    "rule": rule.get("name", "")
+                })
+
+            if fallback_ok:
+                Pause(runtime_cfg.get("action_settle_ms", 250))
+                Telemetry.warn(step_name, "Any-open gump reply fallback succeeded", {
+                    "rule": rule.get("name", ""),
+                    "button_id": fallback_button_id
+                })
+                return True
 
         if (not gump_open) and (not saw_packet):
             discovered_ids = gump_result.get("discovered_ids", [])
@@ -1077,6 +1117,8 @@ def run_gypsy_onboarding_controller(config):
 
 
 run_gypsy_onboarding_controller(BOT_CONFIG)
+
+
 
 
 

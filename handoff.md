@@ -666,3 +666,41 @@ Changes made:
 ## Known Fragilities
 - If multiple nearby statics share the same graphic and hue, search may still select the wrong candidate; additional positional filtering can be added next if needed.
 - If shelf use requires line-of-sight constraints stricter than range-only checks, we may need a nearby-tile waypoint hint for that tent layout.
+
+---
+
+# Iteration Update (2026-03-07): Single-Retry Policy + Race Shelf Any-Open Reply Fallback
+
+## Task Summary
+Applied your requested retry policy and added a race-shelf-specific fallback for the case where the shelf gump is visibly open but id-bound matching fails.
+
+Changes made:
+- `scripts/gypsy_onboarding_config.py`
+  - Set `runtime.max_retries_per_state = 1` (single retry attempt policy).
+  - For `RACE_SHELF_SELECT` rule, added:
+    - `allow_any_open_reply = True`
+- `scripts/gypsy_onboarding_controller.py`
+  - Imported `safe_reply_gump` into controller.
+  - In `_wait_and_apply_rule(...)`, added policy fallback:
+    - if configured rule has `allow_any_open_reply=True` and normal id-based parse fails,
+      attempt `safe_reply_gump(..., gump_id=0, button_id=<resolved>)`.
+    - emits explicit telemetry:
+      - `Attempting any-open gump reply fallback by policy`
+      - `Any-open gump reply fallback succeeded`
+- `scripts/confictura_bot/safe_api.py`
+  - Hardened `safe_reply_gump(...)` to catch and report `ReplyGump` exceptions instead of bubbling raw exceptions.
+
+## Testing Instructions
+1. Re-run `gypsy_onboarding_controller.py`.
+2. Confirm retry cap now behaves as one retry only.
+3. Focus on `RACE_SHELF_SELECT`:
+   - if normal parse fails, expect fallback telemetry.
+4. Verify progression to `RENAME_CHARACTER` (or next immediate step after race select).
+
+## Expected Telemetry
+- `[FSM][RECOVER][WARN] Retrying onboarding step | max_retries=1, ...`
+- `[FSM][RACE_SHELF_SELECT][WARN] Attempting any-open gump reply fallback by policy | ...`
+- `[FSM][RACE_SHELF_SELECT][WARN] Any-open gump reply fallback succeeded | ...`
+
+## Known Fragilities
+- Any-open reply fallback is intentionally scoped to race shelf selection only. If multiple actionable gumps are open at that exact moment, reply targeting can still be ambiguous.

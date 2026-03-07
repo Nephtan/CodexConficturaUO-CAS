@@ -272,7 +272,15 @@ def safe_reply_gump(ctx, state_name, gump_id, button_id, timeout_ms, switches=No
 
     # Prefer the simple overload when no optional payload is needed.
     if not has_switches and not has_text_entries:
-        ReplyGump(gump_id, button_id)
+        try:
+            ReplyGump(gump_id, button_id)
+        except Exception as ex:
+            ctx.fail(state_name, "ReplyGump failed", {
+                "gump_id": gump_hex(gump_id),
+                "button_id": button_id,
+                "exception": str(ex)
+            })
+            return False
         return True
 
     dotnet_switches = switches
@@ -315,7 +323,17 @@ def safe_reply_gump(ctx, state_name, gump_id, button_id, timeout_ms, switches=No
             "exception": str(ex)
         })
 
-    ReplyGump(gump_id, button_id, dotnet_switches, dotnet_entries)
+    try:
+        ReplyGump(gump_id, button_id, dotnet_switches, dotnet_entries)
+    except Exception as ex:
+        ctx.fail(state_name, "ReplyGump failed", {
+            "gump_id": gump_hex(gump_id),
+            "button_id": button_id,
+            "exception": str(ex),
+            "switch_count": len(switches),
+            "text_entry_count": len(normalized_entries)
+        })
+        return False
     return True
 
 
@@ -358,6 +376,9 @@ def safe_move_type(ctx, state_name, graphic, source_alias, destination_alias, hu
     })
     MoveType(graphic, source_alias, destination_alias, -1, -1, 0, hue, amount)
     return True
+
+
+
 
 
 

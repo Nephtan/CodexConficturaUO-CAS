@@ -7,7 +7,7 @@ BOT_CONFIG = {
     "runtime": {
         "tick_pause_ms": 150,
         "max_runtime_ticks": 4000,
-        "max_retries_per_state": 3,
+        "max_retries_per_state": 1,
         "action_settle_ms": 250,
         "pathfind_settle_ms": 350,
         "object_use_range": 3,
@@ -105,6 +105,7 @@ BOT_CONFIG = {
                 "gump_key": "RACE_POTIONS",
                 "text_any": ["GYPSY POTION SHELF", "CATEGORIES"],
                 "button_from_config": "race_button_id",
+                "allow_any_open_reply": True,
                 "wait_timeout_ms": 0,
                 "marks_complete": False
             }
@@ -192,6 +193,8 @@ BOT_CONFIG = {
         }
     ]
 }
+
+
 
 
 
