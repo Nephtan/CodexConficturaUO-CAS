@@ -1037,3 +1037,15 @@ This restores race shelf compatibility while keeping the new multi-factor matchi
 ## Known Fragilities
 - If the shard/client changes `FindType` signature behavior again, this function is now biased toward minimal overloads to stay compatible.
 - Location-constrained search still depends on host support for the 3-argument form.
+
+## Iteration Addendum (2026-03-07): Visitor Journal Pre-Path Relaxation
+
+Adjustment made after live failure telemetry:
+- `RENAME_CHARACTER` was failing before object interaction because strict pre-path to `rename_journal_spot` could not satisfy proximity in that tent layout.
+
+Change:
+- In `_rename_via_journal(...)`, inability to path near Visitor Journal is now warning-only.
+- Flow now continues to direct object lookup (`FindType` + hue/name token checks) instead of hard-failing on movement alone.
+
+Expected effect:
+- Rename step now validates based on actual ability to find/use the Visitor Journal, not on pre-positioning success.

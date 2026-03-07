@@ -1089,7 +1089,10 @@ class StepExecutorState(State):
                 "desired_distance": 2
             })
             if not _ensure_near_ref_tile(ctx, step_name, "rename_journal_spot", runtime_cfg, 2, False):
-                return False
+                Telemetry.warn(step_name, "Unable to path near Visitor Journal; continuing with direct object lookup", {
+                    "ref": "rename_journal_spot",
+                    "fallback": "findtype_by_graphic_hue_name"
+                })
         rename_rule_template = {
             "name": "Rename Character",
             "gump_key": "NAME_ALTER",
@@ -1399,5 +1402,7 @@ def run_gypsy_onboarding_controller(config):
 
 
 run_gypsy_onboarding_controller(BOT_CONFIG)
+
+
 
 
