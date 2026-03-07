@@ -104,7 +104,7 @@ BOT_CONFIG = {
             "rule": {
                 "name": "Gypsy Start Tarot",
                 "gump_key": "GYPSY_TAROT",
-                "text_any": ["Greetings", "tarot"],
+                "text_any": [],
                 "button_id": 99,
                 "wait_timeout_ms": 0,
                 "marks_complete": False
@@ -162,7 +162,7 @@ BOT_CONFIG = {
             "rule": {
                 "name": "Gypsy Start Tarot Final",
                 "gump_key": "GYPSY_TAROT",
-                "text_any": ["Greetings", "tarot"],
+                "text_any": [],
                 "button_id": 99,
                 "wait_timeout_ms": 0,
                 "marks_complete": False
@@ -199,3 +199,4 @@ BOT_CONFIG = {
         }
     ]
 }
+

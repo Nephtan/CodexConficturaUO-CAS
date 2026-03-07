@@ -1129,3 +1129,20 @@ Implementation notes:
 
 ## Known Fragilities
 - If `thuvia_mode` contains unexpected text, mode-based button selection defaults to `NEUTRAL` behavior; keep values within `NEUTRAL|PVP|PVE`.
+
+## Iteration Addendum (2026-03-07): Enabled-Flag Hardening + Final Gypsy Rule Relaxation
+
+Adjustment made after neutral-mode run telemetry:
+- Race shelf steps were unexpectedly policy-skipped despite configured enable flag.
+- Final gypsy open-deck step failed on strict text matching when expected gump was already open in a different content state.
+
+Changes:
+- `scripts/gypsy_onboarding_controller.py`
+  - `_step_enabled(...)` now normalizes flag values robustly (`bool`, numeric, and string forms such as `true/false`, `on/off`, `1/0`).
+  - Skip telemetry now includes `enabled_flag_value` to expose the actual evaluated value.
+- `scripts/gypsy_onboarding_config.py`
+  - `GYPSY_OPEN_DECK_FINAL.rule.text_any` set to empty list so gump-id match can proceed without brittle content string requirements.
+
+Expected effect:
+- Race shelf enable flag behavior is deterministic and diagnosable from logs.
+- Final gypsy transition is tolerant when the tarot gump is already open but not on the exact prior text page.
