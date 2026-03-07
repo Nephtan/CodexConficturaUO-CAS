@@ -23,7 +23,7 @@ BOT_CONFIG = {
     "onboarding": {
         "unknown_gump_is_fatal": True,
         "allow_any_open_gump_fallback": False,
-        "enable_race_shelf": True,
+        "enable_race_shelf": False,
         "race_category_button_id": 123456789,
         "race_button_id": 1000,
         "thuvia_mode": "NEUTRAL",
