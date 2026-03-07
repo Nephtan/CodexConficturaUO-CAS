@@ -105,4 +105,23 @@ In addition to existing telemetry rules, every state-machine iteration must prov
 * Use a thin macro loader that appends repo `scripts` path and executes controller entry file.
 * Keep controller modules self-healing for iterative development: import cache purge + API publication should happen automatically.
 * Keep all behavior policy in config dictionaries so operator can tune without code edits.
+## **13\. Confictura-First Automation Rules**
+
+Confictura is highly customized. Treat shard-specific behavior as the default, not the exception.
+
+* **Default Assumption:** Every interaction (gumps, context menus, movement constraints, onboarding flow) may differ from vanilla UO.
+* **Source-of-Truth Order:**
+  1. Operator recorder output from ClassicAssist (actual command path used by live client).
+  2. Confictura server code and world placements in `/ConficturaRepositoryDocs`.
+  3. ClassicAssist command docs for client API syntax/limits.
+* **No Generic-First Implementations:** Do not ship a vanilla behavior and “wait to see if it breaks.” Start from shard evidence first.
+* **Object Resolution Policy:** Prefer multi-factor matching (graphic + hue + name token + location reference) over graphic-only matching in custom areas.
+
+## **14\. Critical-Step Policy For Onboarding**
+
+* **Critical steps must fail-stop by default.** Do not silently skip them.
+* **Skip behavior must be explicit policy, disabled by default, and named in config.**
+* **If a step is policy-skipped, telemetry must include:** step name, skip flag, and exact reason.
+* **Visitor Journal rename path is treated as shard-specific and must target the actual start-area object definition, not a generic rename assumption.**
 \</INSTRUCTIONS\>
+

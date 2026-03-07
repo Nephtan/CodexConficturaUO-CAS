@@ -932,3 +932,70 @@ Changes made:
 ## Known Fragilities
 - If every adjacent tile is blocked by shard dynamics/mobiles at that instant, sidestep can still fail and the fail-safe policy will trigger.
 - This fix is movement-policy specific; it does not alter gump logic or retry policy.
+
+---
+
+# Iteration Update (2026-03-07): Visitor Journal Rename Hardening (Policy + Shard Evidence)
+
+## Task Summary
+Updated rename flow to use Confictura shard evidence for the start-area rename object and removed default skip behavior.
+
+Confirmed from `ConficturaRepositoryDocs/ConficturaRepository.xml`:
+- Start-area placement: `ChangeName 20445 (Name=Visitor Journal)` at `3570 3400 7`
+- Item implementation: `ChangeName : Item` with `base(0x14EF)` and `OnDoubleClick -> NameAlterGump`
+
+Changes made:
+- `scripts/gypsy_onboarding_config.py`
+  - `onboarding.rename_allow_skip = False` (fail-stop by default)
+  - Added/updated world refs:
+    - `rename_journal_graphic = 0x14EF`
+    - `rename_journal_name_any = ["visitor journal", "name change contract"]`
+    - `rename_journal_spot = (3570, 3400, 0)` (movement-safe floor reference near journal)
+    - `rename_journal_range = 12`
+- `scripts/gypsy_onboarding_controller.py`
+  - `_find_object_alias(...)` now supports multi-factor matching:
+    - graphic, hue, optional name tokens, optional find_location
+    - logs `observed_names` and token filters on failure
+  - `_resolve_object_refs(...)` and `_execute_use_object_ref(...)` now pass name tokens and optional find-location through to object search
+  - `_rename_via_journal(...)` now:
+    - paths near `rename_journal_spot` before lookup
+    - matches Visitor Journal by configured name tokens
+    - uses relaxed gump text gate (`text_any=[]`) for NameAlter rule to avoid brittle text coupling
+
+## Testing Instructions
+1. Run `gypsy_onboarding_controller.py` with a fresh starting-area character.
+2. Watch `RENAME_CHARACTER` specifically:
+   - confirm `Pathfinding near Visitor Journal`
+   - confirm `Matched object` includes name token context
+   - confirm gump submit attempts for each candidate name
+3. If all candidates are unavailable, expect fail-stop (not skip).
+4. Share logs from `RENAME_CHARACTER` start through either success or fail-stop.
+
+## Expected Telemetry
+- `[FSM][RENAME_CHARACTER][INFO] Pathfinding near Visitor Journal | ...`
+- `[FSM][RENAME_CHARACTER][INFO] Matched object | graphic=0x14ef, ... name_tokens=visitor journal|name change contract`
+- success path:
+  - `[FSM][RENAME_CHARACTER][INFO] Rename succeeded | ...`
+- fail-stop path:
+  - `[FSM][RENAME_CHARACTER][ERROR] Rename failed for all candidate names | ...`
+
+## Known Fragilities
+- Candidate names can be rejected by shard naming rules/uniqueness; this is now intentionally fail-stop unless skip policy is explicitly re-enabled.
+- If start-area decoration/layout changes, only `rename_journal_spot` / token list should need config retuning.
+
+---
+
+# Alpha Retrospective (2026-03-07)
+
+## Lessons Learned
+1. ClassicAssist recorder output is authoritative for command sequencing and practical button IDs.
+2. Gump packet waits alone are insufficient; open-gump state checks are required in parallel.
+3. Confictura server code/world definitions must drive object IDs, names, and placement assumptions.
+4. Context menu handling requires shard-specific candidate strategies and explicit telemetry.
+5. Pathfind overload support varies by host; proximity intent should be enforced in controller logic.
+6. “Near but not exact tile” requires explicit sidestep behavior when `distance=0` occurs.
+7. One-retry policy gives faster signal and reduces noisy loops on deterministic failures.
+8. Completion verification should combine journal checks with world-state fallbacks.
+9. Optional-step skipping should be explicit policy, off by default for critical onboarding steps.
+10. High-verbosity structured telemetry is the core debugging tool for blind development.
+

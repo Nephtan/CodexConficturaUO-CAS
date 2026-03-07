@@ -450,28 +450,36 @@ def _find_mobile_alias_by_name_tokens(ctx, state_name, tokens, search_range):
     })
     return None
 
-def _find_object_alias(ctx, state_name, graphic, hue, search_range):
+def _find_object_alias(ctx, state_name, graphic, hue, search_range, name_tokens=None, find_location=None):
     world_cfg = ctx.config.get("world_refs", {})
     max_scan = int(world_cfg.get("object_search_max_scan", 40))
+
+    normalized_tokens = _normalize_tokens(name_tokens)
 
     found = False
     matched_hue = -1
     scanned = 0
+    observed_names = []
 
     ClearIgnoreList()
 
     while scanned < max_scan:
         found = False
         try:
-            found = FindType(graphic, search_range)
+            if find_location in (None, ""):
+                if int(hue) == -1:
+                    found = FindType(graphic, search_range)
+                else:
+                    found = FindType(graphic, search_range, -1, int(hue))
+            else:
+                if int(hue) == -1:
+                    found = FindType(graphic, search_range, find_location)
+                else:
+                    found = FindType(graphic, search_range, find_location, int(hue))
         except Exception:
             found = False
 
         if not found:
-            break
-
-        if int(hue) == -1:
-            matched_hue = -1
             break
 
         try:
@@ -479,12 +487,31 @@ def _find_object_alias(ctx, state_name, graphic, hue, search_range):
         except Exception:
             matched_hue = -2
 
-        if matched_hue == int(hue):
-            break
+        if int(hue) != -1 and int(matched_hue) != int(hue):
+            IgnoreObject("found")
+            scanned += 1
+            Pause(10)
+            continue
 
-        IgnoreObject("found")
-        scanned += 1
-        Pause(10)
+        candidate_name = ""
+        try:
+            candidate_name = Name("found")
+        except Exception:
+            candidate_name = ""
+
+        if candidate_name is None:
+            candidate_name = ""
+
+        if len(observed_names) < 12:
+            observed_names.append(str(candidate_name))
+
+        if len(normalized_tokens) > 0 and not _name_matches(candidate_name, normalized_tokens):
+            IgnoreObject("found")
+            scanned += 1
+            Pause(10)
+            continue
+
+        break
 
     ClearIgnoreList()
 
@@ -492,7 +519,10 @@ def _find_object_alias(ctx, state_name, graphic, hue, search_range):
         ctx.fail(state_name, "Unable to locate required object", {
             "graphic": hex(graphic),
             "hue": hue,
-            "range": search_range
+            "range": search_range,
+            "name_tokens": "|".join(normalized_tokens),
+            "find_location": str(find_location),
+            "observed_names": "|".join(observed_names)
         })
         return None
 
@@ -501,7 +531,8 @@ def _find_object_alias(ctx, state_name, graphic, hue, search_range):
             "graphic": hex(graphic),
             "required_hue": int(hue),
             "matched_hue": int(matched_hue),
-            "range": search_range
+            "range": search_range,
+            "name_tokens": "|".join(normalized_tokens)
         })
         return None
 
@@ -513,7 +544,8 @@ def _find_object_alias(ctx, state_name, graphic, hue, search_range):
     if serial_value <= 0:
         ctx.fail(state_name, "FindType returned invalid object alias", {
             "graphic": hex(graphic),
-            "hue": hue
+            "hue": hue,
+            "name_tokens": "|".join(normalized_tokens)
         })
         return None
 
@@ -522,10 +554,12 @@ def _find_object_alias(ctx, state_name, graphic, hue, search_range):
         "serial": hex(serial_value),
         "graphic": hex(graphic),
         "hue": hue,
-        "distance": Distance("onboarding_object")
+        "distance": Distance("onboarding_object"),
+        "name_tokens": "|".join(normalized_tokens)
     })
 
     return "onboarding_object"
+
 class BootstrapState(State):
     key = "BOOTSTRAP"
 
@@ -931,20 +965,28 @@ class StepExecutorState(State):
         if step.get("range_ref"):
             search_range = world_cfg.get(step.get("range_ref"), search_range)
 
-        return (int(graphic), int(hue), int(search_range))
+        name_tokens = step.get("name_any", [])
+        if step.get("name_any_ref"):
+            name_tokens = world_cfg.get(step.get("name_any_ref"), name_tokens)
+        normalized_name_tokens = _normalize_tokens(name_tokens)
+
+        find_location = step.get("find_location", None)
+        if step.get("find_location_ref"):
+            find_location = world_cfg.get(step.get("find_location_ref"), find_location)
+
+        return (int(graphic), int(hue), int(search_range), normalized_name_tokens, find_location)
 
     def _execute_use_object_ref(self, ctx, step_name, step):
         runtime_cfg = ctx.config.get("runtime", {})
 
-        graphic, hue, search_range = self._resolve_object_refs(ctx, step)
+        graphic, hue, search_range, name_tokens, find_location = self._resolve_object_refs(ctx, step)
         if graphic <= 0:
             ctx.fail(step_name, "Invalid object graphic", {"graphic": graphic})
             return False
 
-        object_alias = _find_object_alias(ctx, step_name, graphic, hue, search_range)
+        object_alias = _find_object_alias(ctx, step_name, graphic, hue, search_range, name_tokens, find_location)
         if object_alias is None:
             return False
-
         action_settle_ms = int(runtime_cfg.get("action_settle_ms", 250))
         pathfind_settle_ms = int(runtime_cfg.get("pathfind_settle_ms", 350))
         desired_distance = int(step.get("pathfind_desired_distance", runtime_cfg.get("object_use_range", 3)))
@@ -1036,10 +1078,21 @@ class StepExecutorState(State):
             Telemetry.info(step_name, "Current name already acceptable", {"name": old_name})
             return True
 
+        rename_ref = _resolve_world_ref(ctx, "rename_journal_spot")
+        if isinstance(rename_ref, tuple) and len(rename_ref) == 3:
+            Telemetry.info(step_name, "Pathfinding near Visitor Journal", {
+                "ref": "rename_journal_spot",
+                "x": rename_ref[0],
+                "y": rename_ref[1],
+                "z": rename_ref[2],
+                "desired_distance": 2
+            })
+            if not _ensure_near_ref_tile(ctx, step_name, "rename_journal_spot", runtime_cfg, 2, False):
+                return False
         rename_rule_template = {
             "name": "Rename Character",
             "gump_key": "NAME_ALTER",
-            "text_any": ["fantasy world", "gypsy", "Type here"],
+            "text_any": [],
             "button_id": 1,
             "wait_timeout_ms": 0,
             "marks_complete": False
@@ -1061,7 +1114,9 @@ class StepExecutorState(State):
             use_step = {
                 "graphic_ref": "rename_journal_graphic",
                 "hue_ref": "rename_journal_hue",
-                "range_ref": "rename_journal_range"
+                "range_ref": "rename_journal_range",
+                "name_any_ref": "rename_journal_name_any",
+                "pathfind_desired_distance": 2
             }
             if not self._execute_use_object_ref(ctx, step_name, use_step):
                 continue
@@ -1343,9 +1398,4 @@ def run_gypsy_onboarding_controller(config):
 
 
 run_gypsy_onboarding_controller(BOT_CONFIG)
-
-
-
-
-
 

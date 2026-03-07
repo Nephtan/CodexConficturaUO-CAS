@@ -28,7 +28,7 @@ BOT_CONFIG = {
         "race_category_button_id": 123456789,
         "race_button_id": 1000,
         "enable_rename": True,
-        "rename_allow_skip": True,
+        "rename_allow_skip": False,
         "rename_desired_names": [
             "Wayfarer",
             "Ashwander",
@@ -62,7 +62,9 @@ BOT_CONFIG = {
         "race_shelf_range": 8,
         "rename_journal_graphic": 0x14EF,
         "rename_journal_hue": -1,
-        "rename_journal_range": 8
+        "rename_journal_range": 12,
+        "rename_journal_name_any": ["visitor journal", "name change contract"],
+        "rename_journal_spot": (3570, 3400, 0)
     },
     "steps": [
         {
@@ -213,9 +215,4 @@ BOT_CONFIG = {
         }
     ]
 }
-
-
-
-
-
 
