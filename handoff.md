@@ -895,3 +895,40 @@ Why this still preserves behavior:
 ## Expected Telemetry
 - `[FSM][MOVE_TO_THUVIA][INFO] Pathfinding near reference | ...`
 - no `Pathfind() takes at most 3 arguments` exception.
+
+---
+
+# Iteration Update (2026-03-07): MOVE_TO_THUVIA Exact-Tile Sidestep Fix
+
+## Task Summary
+Fixed the remaining Thuvia proximity edge case where the character reached `distance=0` (standing on Thuvia's exact tile) and then looped until `FATAL_STOP`.
+
+Root cause:
+- `_ensure_near_ref_tile(...)` correctly rejected `distance=0` when `avoid_exact_tile=True`, but still kept pathing to the same destination tile, which cannot satisfy `distance>0`.
+
+Changes made:
+- `scripts/gypsy_onboarding_controller.py`
+  - Added `_build_adjacent_tiles(...)` to generate neighbor tiles around the reference tile.
+  - Added `_step_off_exact_tile(...)` to actively sidestep from the exact tile to a valid adjacent tile.
+  - Updated `_ensure_near_ref_tile(...)`:
+    - When `current_distance == 0` and `avoid_exact_tile=True`, it now runs sidestep logic instead of re-pathing to destination.
+    - If sidestep succeeds, step passes immediately.
+    - If sidestep fails, step fails fast (no repeated re-path spam to same exact tile).
+
+## Testing Instructions
+1. Run `gypsy_onboarding_controller.py` from a fresh start-area character.
+2. Watch `MOVE_TO_THUVIA`.
+3. Verify behavior when character lands exactly on Thuvia tile:
+   - It should log sidestep attempt.
+   - It should move to adjacent tile and proceed to `SPEAK_THUVIA_CHOOSE`.
+4. Confirm full run still reaches `COMPLETE_STOP`.
+
+## Expected Telemetry
+- `[FSM][MOVE_TO_THUVIA][WARN] Standing on exact tile; attempting sidestep | ...`
+- `[FSM][MOVE_TO_THUVIA][DEBUG] Sidestep candidate | ...`
+- `[FSM][MOVE_TO_THUVIA][INFO] Sidestep complete | distance=1, desired_distance=1`
+- Then transition to next step without `Unable to reach required proximity to tile`.
+
+## Known Fragilities
+- If every adjacent tile is blocked by shard dynamics/mobiles at that instant, sidestep can still fail and the fail-safe policy will trigger.
+- This fix is movement-policy specific; it does not alter gump logic or retry policy.

@@ -167,6 +167,99 @@ def _distance_to_tile_xy(tile):
         return -1
 
 
+def _build_adjacent_tiles(tile, max_radius):
+    if not isinstance(tile, tuple) or len(tile) != 3:
+        return []
+
+    target_x = int(tile[0])
+    target_y = int(tile[1])
+    target_z = int(tile[2])
+
+    radius_limit = int(max_radius)
+    if radius_limit < 1:
+        radius_limit = 1
+
+    candidates = []
+    seen = {}
+
+    radius = 1
+    while radius <= radius_limit:
+        dx = -radius
+        while dx <= radius:
+            dy = -radius
+            while dy <= radius:
+                if dx == 0 and dy == 0:
+                    dy += 1
+                    continue
+
+                if max(abs(dx), abs(dy)) != radius:
+                    dy += 1
+                    continue
+
+                key = (target_x + dx, target_y + dy, target_z)
+                if key not in seen:
+                    seen[key] = True
+                    candidates.append(key)
+                dy += 1
+            dx += 1
+        radius += 1
+
+    return candidates
+
+
+def _step_off_exact_tile(ctx, state_name, destination, runtime_cfg, desired_distance):
+    settle_ms = int(runtime_cfg.get("pathfind_settle_ms", 350))
+    path_wait_loops = int(runtime_cfg.get("path_wait_loops", 80))
+
+    adjacent_tiles = _build_adjacent_tiles(destination, desired_distance)
+    if len(adjacent_tiles) == 0:
+        return False
+
+    Telemetry.debug(state_name, "Attempting sidestep from exact tile", {
+        "candidate_count": len(adjacent_tiles),
+        "target_x": destination[0],
+        "target_y": destination[1],
+        "target_z": destination[2],
+        "desired_distance": desired_distance
+    })
+
+    for tile in adjacent_tiles:
+        Telemetry.debug(state_name, "Sidestep candidate", {
+            "candidate_x": tile[0],
+            "candidate_y": tile[1],
+            "candidate_z": tile[2]
+        })
+
+        safe_pathfind(
+            ctx,
+            state_name,
+            tile,
+            settle_ms,
+            None,
+            None,
+            False
+        )
+
+        loop = 0
+        while loop < path_wait_loops:
+            loop += 1
+            if not Pathfinding():
+                break
+            Pause(50)
+
+        Pause(50)
+
+        current_distance = _distance_to_tile_xy(destination)
+        if current_distance > 0 and current_distance <= int(desired_distance):
+            Telemetry.info(state_name, "Sidestep complete", {
+                "distance": current_distance,
+                "desired_distance": desired_distance
+            })
+            return True
+
+    return False
+
+
 def _ensure_near_ref_tile(ctx, state_name, ref_name, runtime_cfg, desired_distance, avoid_exact_tile=False):
     destination = _resolve_world_ref(ctx, ref_name)
     if not isinstance(destination, tuple) or len(destination) != 3:
@@ -187,6 +280,15 @@ def _ensure_near_ref_tile(ctx, state_name, ref_name, runtime_cfg, desired_distan
         if current_distance >= 0 and current_distance <= desired:
             if not avoid_exact_tile or current_distance > 0:
                 return True
+
+            if current_distance == 0 and avoid_exact_tile:
+                Telemetry.warn(state_name, "Standing on exact tile; attempting sidestep", {
+                    "ref": ref_name,
+                    "desired_distance": desired
+                })
+                if _step_off_exact_tile(ctx, state_name, destination, runtime_cfg, desired):
+                    return True
+                break
 
         attempt += 1
         Telemetry.debug(state_name, "Pathing attempt near tile", {
@@ -235,6 +337,7 @@ def _ensure_near_ref_tile(ctx, state_name, ref_name, runtime_cfg, desired_distan
         "self_z": z_self
     })
     return False
+
 def _expected_gump_ids_for_step(ctx, step):
     onboarding_cfg = ctx.config.get("onboarding", {})
     overrides = onboarding_cfg.get("gump_id_overrides", {})
@@ -1240,6 +1343,7 @@ def run_gypsy_onboarding_controller(config):
 
 
 run_gypsy_onboarding_controller(BOT_CONFIG)
+
 
 
 
