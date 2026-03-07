@@ -134,7 +134,9 @@ BOT_CONFIG = {
         {
             "name": "MOVE_TO_THUVIA",
             "action": "move_to_ref",
-            "ref": "thuvia_spot"
+            "ref": "thuvia_spot",
+            "within_distance": 1,
+            "avoid_exact_tile": True
         },
         {
             "name": "SPEAK_THUVIA_CHOOSE",
@@ -211,6 +213,7 @@ BOT_CONFIG = {
         }
     ]
 }
+
 
 
 

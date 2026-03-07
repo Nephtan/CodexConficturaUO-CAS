@@ -157,6 +157,84 @@ def _ensure_on_ref_tile(ctx, state_name, ref_name, runtime_cfg):
     return False
 
 
+def _distance_to_tile_xy(tile):
+    if not isinstance(tile, tuple) or len(tile) < 2:
+        return -1
+
+    try:
+        return int(Distance(int(tile[0]), int(tile[1])))
+    except Exception:
+        return -1
+
+
+def _ensure_near_ref_tile(ctx, state_name, ref_name, runtime_cfg, desired_distance, avoid_exact_tile=False):
+    destination = _resolve_world_ref(ctx, ref_name)
+    if not isinstance(destination, tuple) or len(destination) != 3:
+        ctx.fail(state_name, "Invalid waypoint reference", {"ref": ref_name})
+        return False
+
+    desired = int(desired_distance)
+    if desired < 1:
+        desired = 1
+
+    max_attempts = int(runtime_cfg.get("path_reissue_max_attempts", 5))
+    path_wait_loops = int(runtime_cfg.get("path_wait_loops", 80))
+    settle_ms = int(runtime_cfg.get("pathfind_settle_ms", 350))
+
+    attempt = 0
+    while attempt < max_attempts:
+        current_distance = _distance_to_tile_xy(destination)
+        if current_distance >= 0 and current_distance <= desired:
+            if not avoid_exact_tile or current_distance > 0:
+                return True
+
+        attempt += 1
+        Telemetry.debug(state_name, "Pathing attempt near tile", {
+            "ref": ref_name,
+            "attempt": attempt,
+            "max_attempts": max_attempts,
+            "target_x": destination[0],
+            "target_y": destination[1],
+            "target_z": destination[2],
+            "desired_distance": desired,
+            "avoid_exact_tile": avoid_exact_tile,
+            "current_distance": current_distance
+        })
+
+        safe_pathfind(
+            ctx,
+            state_name,
+            destination,
+            settle_ms,
+            True,
+            desired,
+            False
+        )
+
+        loop = 0
+        while loop < path_wait_loops:
+            loop += 1
+            if not Pathfinding():
+                break
+            Pause(50)
+
+        Pause(50)
+
+    final_distance = _distance_to_tile_xy(destination)
+    x_self, y_self, z_self = _self_tile()
+    ctx.fail(state_name, "Unable to reach required proximity to tile", {
+        "ref": ref_name,
+        "target_x": destination[0],
+        "target_y": destination[1],
+        "target_z": destination[2],
+        "desired_distance": desired,
+        "avoid_exact_tile": avoid_exact_tile,
+        "distance": final_distance,
+        "self_x": x_self,
+        "self_y": y_self,
+        "self_z": z_self
+    })
+    return False
 def _expected_gump_ids_for_step(ctx, step):
     onboarding_cfg = ctx.config.get("onboarding", {})
     overrides = onboarding_cfg.get("gump_id_overrides", {})
@@ -506,6 +584,32 @@ class StepExecutorState(State):
             ctx.fail(step_name, "Invalid waypoint reference", {"ref": ref_name})
             return False
 
+        within_distance = step.get("within_distance", None)
+        avoid_exact_tile = bool(step.get("avoid_exact_tile", False))
+
+        if within_distance is not None:
+            desired_distance = int(within_distance)
+            if desired_distance < 1:
+                desired_distance = 1
+
+            Telemetry.info(step_name, "Pathfinding near reference", {
+                "ref": ref_name,
+                "x": destination[0],
+                "y": destination[1],
+                "z": destination[2],
+                "desired_distance": desired_distance,
+                "avoid_exact_tile": avoid_exact_tile
+            })
+
+            return _ensure_near_ref_tile(
+                ctx,
+                step_name,
+                ref_name,
+                runtime_cfg,
+                desired_distance,
+                avoid_exact_tile
+            )
+
         Telemetry.info(step_name, "Pathfinding to reference", {
             "ref": ref_name,
             "x": destination[0],
@@ -514,8 +618,6 @@ class StepExecutorState(State):
         })
 
         return _ensure_on_ref_tile(ctx, step_name, ref_name, runtime_cfg)
-
-
     def _execute_mobile_context(self, ctx, step_name, step):
         runtime_cfg = ctx.config.get("runtime", {})
 

@@ -196,33 +196,36 @@ def safe_pathfind(ctx, state_name, destination, settle_pause_ms, checkdistance=N
 
     Telemetry.info(state_name, "Pathfind request", telemetry_payload)
 
+    # This ClassicAssist host supports Pathfind with destination-only signatures.
+    # Keep distance constraints as caller-side checks to avoid overload crashes.
     result = False
-    if isinstance(destination, tuple) and len(destination) == 3:
-        if checkdistance is None and desireddistance is None:
+    pathfind_exception = None
+
+    try:
+        if isinstance(destination, tuple) and len(destination) == 3:
             result = Pathfind(destination[0], destination[1], destination[2])
         else:
-            check_flag = bool(checkdistance)
-            desired = int(desireddistance if desireddistance is not None else 1)
-            result = Pathfind(destination[0], destination[1], destination[2], check_flag, desired)
-    else:
-        if checkdistance is None and desireddistance is None:
             result = Pathfind(destination)
-        else:
-            check_flag = bool(checkdistance)
-            desired = int(desireddistance if desireddistance is not None else 1)
-            result = Pathfind(destination, check_flag, desired)
+    except Exception as ex:
+        pathfind_exception = ex
+        result = False
 
     Pause(settle_pause_ms)
+
     if not result:
         if fail_on_error:
-            ctx.fail(state_name, "Pathfind failed", telemetry_payload)
+            payload = dict(telemetry_payload)
+            if pathfind_exception is not None:
+                payload["exception"] = str(pathfind_exception)
+            ctx.fail(state_name, "Pathfind failed", payload)
         else:
-            Telemetry.warn(state_name, "Pathfind failed (non-fatal)", telemetry_payload)
+            payload = dict(telemetry_payload)
+            if pathfind_exception is not None:
+                payload["exception"] = str(pathfind_exception)
+            Telemetry.warn(state_name, "Pathfind failed (non-fatal)", payload)
         return False
 
     return True
-
-
 def safe_reply_gump(ctx, state_name, gump_id, button_id, timeout_ms, switches=None, textentries=None):
     if switches is None:
         switches = []
@@ -376,6 +379,7 @@ def safe_move_type(ctx, state_name, graphic, source_alias, destination_alias, hu
     })
     MoveType(graphic, source_alias, destination_alias, -1, -1, 0, hue, amount)
     return True
+
 
 
 

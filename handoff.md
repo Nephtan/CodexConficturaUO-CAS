@@ -828,3 +828,70 @@ Changes made:
 
 ## Known Fragilities
 - City-entry journal strings may vary by destination; distance fallback now handles this deterministically.
+
+---
+
+# Iteration Update (2026-03-07): Thuvia Proximity Movement Policy
+
+## Task Summary
+Implemented requested movement behavior for Thuvia approach:
+- Get within 1 tile of Thuvia.
+- Do not stand on Thuvia's exact coordinate tile.
+
+Changes made:
+- `scripts/gypsy_onboarding_config.py`
+  - Updated `MOVE_TO_THUVIA` step:
+    - `within_distance: 1`
+    - `avoid_exact_tile: True`
+- `scripts/gypsy_onboarding_controller.py`
+  - Added proximity movement helper `_ensure_near_ref_tile(...)`.
+  - Added XY-distance helper `_distance_to_tile_xy(...)`.
+  - Updated `_execute_move_to_ref(...)`:
+    - If step provides `within_distance`, use proximity pathing instead of exact-tile enforcement.
+    - Respect `avoid_exact_tile` when evaluating success.
+
+## Testing Instructions
+1. Re-run onboarding script from start area.
+2. Watch `MOVE_TO_THUVIA` telemetry for:
+   - `Pathfinding near reference`
+   - `desired_distance=1`
+   - `avoid_exact_tile=True`
+3. Confirm character stops adjacent to Thuvia (not on her coordinate tile).
+4. Confirm remainder of flow still completes to `COMPLETE_STOP`.
+
+## Expected Telemetry
+- `[FSM][MOVE_TO_THUVIA][INFO] Pathfinding near reference | ... desired_distance=1, avoid_exact_tile=True`
+- no exact-tile failure for Thuvia step.
+
+## Known Fragilities
+- If nearby obstacles force movement constraints, client pathfinding may still momentarily route through tight tiles; success gate now explicitly checks distance and exact-tile avoidance before passing.
+
+---
+
+# Iteration Update (2026-03-07): Pathfind Overload Compatibility Fix
+
+## Task Summary
+Resolved runtime crash in `MOVE_TO_THUVIA` proximity mode:
+- `Pathfind() takes at most 3 arguments (5 given)`
+
+Root cause:
+- This ClassicAssist host does not expose advanced Pathfind overloads with `checkdistance` / `desireddistance` arguments.
+
+Changes made:
+- `scripts/confictura_bot/safe_api.py`
+  - Updated `safe_pathfind(...)` to call only destination-only signatures:
+    - `Pathfind(x, y, z)` or `Pathfind(obj)`
+  - Kept `checkdistance` / `desireddistance` as telemetry metadata only.
+  - Added exception capture in fail payloads.
+
+Why this still preserves behavior:
+- Proximity constraints are now enforced by controller-side distance checks in `_ensure_near_ref_tile(...)` rather than by Pathfind overload arguments.
+
+## Testing Instructions
+1. Re-run onboarding script.
+2. Confirm `MOVE_TO_THUVIA` no longer throws Pathfind argument exception.
+3. Confirm character ends adjacent to Thuvia and flow continues.
+
+## Expected Telemetry
+- `[FSM][MOVE_TO_THUVIA][INFO] Pathfinding near reference | ...`
+- no `Pathfind() takes at most 3 arguments` exception.
