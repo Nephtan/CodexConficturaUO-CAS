@@ -37,7 +37,8 @@ BOT_CONFIG = {
         "thuvia_mode": "NEUTRAL",
         "tarot_card_button_id": 101,
         "completion_journal_any": [
-            "The card vanishes from your hand as you magically appear elsewhere."
+            "The card vanishes from your hand as you magically appear elsewhere.",
+            "You have entered the City of Britain."
         ],
         # Optional manual overrides if runtime gump ids differ on your server build.
         # Keys can be gump_key values (example: "GYPSY_TAROT") or full type names.
@@ -204,9 +205,14 @@ BOT_CONFIG = {
         {
             "name": "VERIFY_TELEPORT_MESSAGE",
             "action": "wait_journal_any",
-            "entries_from_config": "completion_journal_any"
+            "entries_from_config": "completion_journal_any",
+            "success_if_far_from_ref": "gypsy_seat",
+            "success_min_distance": 20
         }
     ]
 }
+
+
+
 
 

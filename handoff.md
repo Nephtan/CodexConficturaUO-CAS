@@ -785,3 +785,46 @@ Changes made:
 
 ## Known Fragilities
 - If shard changes Thuvia gump id in future updates, adjust override only (no controller logic changes needed).
+
+---
+
+# Iteration Update (2026-03-07): Completion Check Debounce (Journal Timing + Distance Fallback)
+
+## Task Summary
+Onboarding reached Britain successfully but failed at final verification due journal timing race.
+
+Observed behavior:
+- Teleport success messages appeared in journal before or around verification step start.
+- `VERIFY_TELEPORT_MESSAGE` then waited for *new* journal hits and timed out, causing false fail-stop.
+
+Changes made:
+- `scripts/gypsy_onboarding_controller.py`
+  - Enhanced `_execute_wait_journal_any(...)` with deterministic pre-check:
+    - if step specifies `success_if_far_from_ref`, it computes distance from that reference tile.
+    - if distance >= threshold, step passes immediately without waiting on journal timing.
+  - Telemetry added:
+    - `Completion condition met by distance from start area`
+- `scripts/gypsy_onboarding_config.py`
+  - Expanded completion journal list:
+    - keeps card-vanish line
+    - adds `You have entered the City of Britain.`
+  - Updated `VERIFY_TELEPORT_MESSAGE` step:
+    - `success_if_far_from_ref: "gypsy_seat"`
+    - `success_min_distance: 20`
+
+## Testing Instructions
+1. Re-run `gypsy_onboarding_controller.py` from start area.
+2. Confirm final stage after tarot draw does not fail-stop when teleport already occurred.
+3. Success expected via one of two paths:
+   - Journal line match, or
+   - distance fallback pass.
+4. Confirm `COMPLETE_STOP` instead of `FATAL_STOP`.
+
+## Expected Telemetry
+- On fallback path:
+  - `[FSM][VERIFY_TELEPORT_MESSAGE][INFO] Completion condition met by distance from start area | ref=gypsy_seat, distance=..., min_distance=20`
+- Final:
+  - `[FSM][COMPLETE_STOP][INFO] Gypsy onboarding complete | ...`
+
+## Known Fragilities
+- City-entry journal strings may vary by destination; distance fallback now handles this deterministically.

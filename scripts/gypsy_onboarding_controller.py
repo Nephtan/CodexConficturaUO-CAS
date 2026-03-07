@@ -912,6 +912,28 @@ class StepExecutorState(State):
         runtime_cfg = ctx.config.get("runtime", {})
         onboarding_cfg = ctx.config.get("onboarding", {})
 
+        fallback_ref = step.get("success_if_far_from_ref", "")
+        if fallback_ref != "":
+            ref_tile = _resolve_world_ref(ctx, fallback_ref)
+            min_distance = int(step.get("success_min_distance", runtime_cfg.get("teleport_min_distance", 20)))
+            if min_distance < 1:
+                min_distance = 1
+
+            if isinstance(ref_tile, tuple) and len(ref_tile) >= 2:
+                distance_from_ref = -1
+                try:
+                    distance_from_ref = int(Distance(int(ref_tile[0]), int(ref_tile[1])))
+                except Exception:
+                    distance_from_ref = -1
+
+                if distance_from_ref >= min_distance:
+                    Telemetry.info(step_name, "Completion condition met by distance from start area", {
+                        "ref": fallback_ref,
+                        "distance": distance_from_ref,
+                        "min_distance": min_distance
+                    })
+                    return True
+
         entries_key = step.get("entries_from_config")
         entries = onboarding_cfg.get(entries_key, [])
         if len(entries) == 0:
@@ -935,7 +957,6 @@ class StepExecutorState(State):
             "text": matched_text
         })
         return True
-
     def _execute_step(self, ctx, step):
         step_name = step.get("name", "UNNAMED_STEP")
         action = step.get("action", "")
