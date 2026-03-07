@@ -999,3 +999,41 @@ Changes made:
 9. Optional-step skipping should be explicit policy, off by default for critical onboarding steps.
 10. High-verbosity structured telemetry is the core debugging tool for blind development.
 
+
+---
+
+# Iteration Update (2026-03-07): Object Finder Overload Regression Fix (Race Shelf)
+
+## Task Summary
+Fixed regression where `RACE_SHELF_OPEN` stopped finding the race shelf after object-matching hardening.
+
+Root cause:
+- `_find_object_alias(...)` started using extended `FindType(...)` overloads for hue/location filtering.
+- On this ClassicAssist host, that overload path can fail, causing immediate `found=False` and no object discovery.
+
+Changes made:
+- `scripts/gypsy_onboarding_controller.py`
+  - `_find_object_alias(...)` now uses host-safe search order:
+    1. Try `FindType(graphic, range, find_location)` only if location is explicitly provided.
+    2. Fallback to `FindType(graphic, range)`.
+  - Hue validation remains manual via `Hue("found")` after object discovery.
+  - Name-token matching remains manual via `Name("found")` after object discovery.
+
+This restores race shelf compatibility while keeping the new multi-factor matching behavior.
+
+## Testing Instructions
+1. Run onboarding again from start area.
+2. Confirm `RACE_SHELF_OPEN` finds shelf instead of failing at index 4.
+3. Confirm flow continues into:
+   - `RACE_SHELF_SELECT_CATEGORY`
+   - `RACE_SHELF_SELECT`
+   - `RENAME_CHARACTER`
+4. Share log from `RACE_SHELF_OPEN` through `RENAME_CHARACTER` outcome.
+
+## Expected Telemetry
+- `[FSM][RACE_SHELF_OPEN][INFO] Matched object | graphic=0x506c, hue=2750, ...`
+- no immediate `Unable to locate required object` at race shelf step.
+
+## Known Fragilities
+- If the shard/client changes `FindType` signature behavior again, this function is now biased toward minimal overloads to stay compatible.
+- Location-constrained search still depends on host support for the 3-argument form.

@@ -465,19 +465,20 @@ def _find_object_alias(ctx, state_name, graphic, hue, search_range, name_tokens=
 
     while scanned < max_scan:
         found = False
-        try:
-            if find_location in (None, ""):
-                if int(hue) == -1:
-                    found = FindType(graphic, search_range)
-                else:
-                    found = FindType(graphic, search_range, -1, int(hue))
-            else:
-                if int(hue) == -1:
-                    found = FindType(graphic, search_range, find_location)
-                else:
-                    found = FindType(graphic, search_range, find_location, int(hue))
-        except Exception:
-            found = False
+
+        # First, try caller-provided search location if one exists.
+        if find_location not in (None, ""):
+            try:
+                found = FindType(graphic, search_range, find_location)
+            except Exception:
+                found = False
+
+        # Fallback to host-safe default ground search.
+        if not found:
+            try:
+                found = FindType(graphic, search_range)
+            except Exception:
+                found = False
 
         if not found:
             break
@@ -1398,4 +1399,5 @@ def run_gypsy_onboarding_controller(config):
 
 
 run_gypsy_onboarding_controller(BOT_CONFIG)
+
 
