@@ -269,20 +269,56 @@ def _find_mobile_alias_by_name_tokens(ctx, state_name, tokens, search_range):
     return None
 
 def _find_object_alias(ctx, state_name, graphic, hue, search_range):
+    world_cfg = ctx.config.get("world_refs", {})
+    max_scan = int(world_cfg.get("object_search_max_scan", 40))
+
     found = False
+    matched_hue = -1
+    scanned = 0
 
-    try:
-        found = FindType(graphic, search_range, "ground", hue)
-    except Exception:
+    ClearIgnoreList()
+
+    while scanned < max_scan:
         found = False
+        try:
+            found = FindType(graphic, search_range)
+        except Exception:
+            found = False
 
-    if not found:
-        found = FindType(graphic, search_range)
+        if not found:
+            break
+
+        if int(hue) == -1:
+            matched_hue = -1
+            break
+
+        try:
+            matched_hue = int(Hue("found"))
+        except Exception:
+            matched_hue = -2
+
+        if matched_hue == int(hue):
+            break
+
+        IgnoreObject("found")
+        scanned += 1
+        Pause(10)
+
+    ClearIgnoreList()
 
     if not found:
         ctx.fail(state_name, "Unable to locate required object", {
             "graphic": hex(graphic),
             "hue": hue,
+            "range": search_range
+        })
+        return None
+
+    if int(hue) != -1 and int(matched_hue) != int(hue):
+        ctx.fail(state_name, "Object hue mismatch for required object", {
+            "graphic": hex(graphic),
+            "required_hue": int(hue),
+            "matched_hue": int(matched_hue),
             "range": search_range
         })
         return None
@@ -308,8 +344,6 @@ def _find_object_alias(ctx, state_name, graphic, hue, search_range):
     })
 
     return "onboarding_object"
-
-
 class BootstrapState(State):
     key = "BOOTSTRAP"
 
@@ -666,14 +700,60 @@ class StepExecutorState(State):
         if object_alias is None:
             return False
 
-        if not safe_pathfind(ctx, step_name, object_alias, runtime_cfg.get("pathfind_settle_ms", 350)):
-            return False
+        action_settle_ms = int(runtime_cfg.get("action_settle_ms", 250))
+        pathfind_settle_ms = int(runtime_cfg.get("pathfind_settle_ms", 350))
+        desired_distance = int(step.get("pathfind_desired_distance", runtime_cfg.get("object_use_range", 3)))
+        if desired_distance < 1:
+            desired_distance = 1
 
-        if not safe_use_object(ctx, step_name, object_alias, runtime_cfg.get("action_settle_ms", 250)):
+        distance_now = -1
+        try:
+            distance_now = int(Distance(object_alias))
+        except Exception:
+            distance_now = -1
+
+        if distance_now > desired_distance:
+            path_ok = safe_pathfind(
+                ctx,
+                step_name,
+                object_alias,
+                pathfind_settle_ms,
+                True,
+                desired_distance,
+                False
+            )
+
+            distance_after = -1
+            try:
+                distance_after = int(Distance(object_alias))
+            except Exception:
+                distance_after = -1
+
+            if not path_ok and (distance_after < 0 or distance_after > desired_distance):
+                ctx.fail(step_name, "Unable to reach object interaction range", {
+                    "object": object_alias,
+                    "desired_distance": desired_distance,
+                    "distance_after": distance_after
+                })
+                return False
+
+            if not path_ok:
+                Telemetry.warn(step_name, "Pathfind failed but object is already within interaction range", {
+                    "object": object_alias,
+                    "desired_distance": desired_distance,
+                    "distance_after": distance_after
+                })
+        else:
+            Telemetry.debug(step_name, "Skipping pathfind; object already within interaction range", {
+                "object": object_alias,
+                "distance": distance_now,
+                "desired_distance": desired_distance
+            })
+
+        if not safe_use_object(ctx, step_name, object_alias, action_settle_ms):
             return False
 
         return True
-
     def _execute_speak(self, ctx, step_name, step):
         runtime_cfg = ctx.config.get("runtime", {})
         line = step.get("text", "")

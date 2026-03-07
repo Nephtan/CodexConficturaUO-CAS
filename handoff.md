@@ -618,3 +618,51 @@ Changes made:
 
 ## Known Fragilities
 - If future steps require non-empty text entries/switches and .NET type coercion fails on a specific client build, telemetry now calls this out explicitly for targeted adjustment.
+
+---
+
+# Iteration Update (2026-03-07): Race Shelf Reachability + Ground Alias Compatibility Fix
+
+## Task Summary
+Resolved the new blocker after successful gypsy deck open:
+- `RACE_SHELF_OPEN` repeatedly found the shelf, then failed on `Pathfind` and hit retry cap.
+- ClassicAssist also printed `Unknown alias "ground"` during object lookup.
+
+Changes made:
+- `scripts/gypsy_onboarding_controller.py`
+  - Reworked `_find_object_alias(...)` to avoid `FindType(..., "ground", ...)` calls.
+  - Object search now uses `FindType(graphic, range)` with optional hue filtering in-code (`Hue("found")`) and ignore-scan retries.
+  - Reworked `_execute_use_object_ref(...)`:
+    - Uses configurable interaction distance (`runtime.object_use_range`, default `3`).
+    - Skips pathfind when already within interaction range.
+    - Uses non-fatal, desired-distance pathfind for objects (`checkdistance=True`, `desireddistance=<range>`).
+    - If pathfind fails but object is still within range, continues to `UseObject` instead of failing step.
+- `scripts/confictura_bot/safe_api.py`
+  - Extended `safe_pathfind(...)` with optional parameters:
+    - `checkdistance`, `desireddistance`, `fail_on_error`
+  - Added non-fatal warning mode when `fail_on_error=False`.
+- `scripts/gypsy_onboarding_config.py`
+  - Added runtime/config knobs:
+    - `runtime.object_use_range = 3`
+    - `world_refs.object_search_max_scan = 40`
+
+## Testing Instructions
+1. Re-run `gypsy_onboarding_controller.py` from the same start area state.
+2. Confirm gypsy step still succeeds into `RACE_SHELF_OPEN`.
+3. In `RACE_SHELF_OPEN`, verify one of these telemetry paths:
+   - `Skipping pathfind; object already within interaction range`, or
+   - `Pathfind failed (non-fatal)` followed by `UseObject` attempt.
+4. Confirm progression to `RACE_SHELF_SELECT` and first gump-rule processing.
+
+## Expected Telemetry
+- `[FSM][RACE_SHELF_OPEN][INFO] Matched object | ...`
+- then either:
+  - `[FSM][RACE_SHELF_OPEN][DEBUG] Skipping pathfind; object already within interaction range | ...`
+  - or `[FSM][RACE_SHELF_OPEN][WARN] Pathfind failed (non-fatal) | ...`
+- followed by:
+  - `[FSM][RACE_SHELF_OPEN][INFO] Using object | object=onboarding_object`
+  - transition to `[FSM][RACE_SHELF_SELECT][INFO] ...`
+
+## Known Fragilities
+- If multiple nearby statics share the same graphic and hue, search may still select the wrong candidate; additional positional filtering can be added next if needed.
+- If shelf use requires line-of-sight constraints stricter than range-only checks, we may need a nearby-tile waypoint hint for that tent layout.

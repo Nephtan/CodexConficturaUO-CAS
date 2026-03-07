@@ -187,18 +187,37 @@ def safe_speech(ctx, state_name, text, settle_pause_ms):
     return True
 
 
-def safe_pathfind(ctx, state_name, destination, settle_pause_ms):
-    Telemetry.info(state_name, "Pathfind request", {"destination": destination})
+def safe_pathfind(ctx, state_name, destination, settle_pause_ms, checkdistance=None, desireddistance=None, fail_on_error=True):
+    telemetry_payload = {"destination": destination}
+    if checkdistance is not None:
+        telemetry_payload["checkdistance"] = bool(checkdistance)
+    if desireddistance is not None:
+        telemetry_payload["desireddistance"] = int(desireddistance)
+
+    Telemetry.info(state_name, "Pathfind request", telemetry_payload)
 
     result = False
     if isinstance(destination, tuple) and len(destination) == 3:
-        result = Pathfind(destination[0], destination[1], destination[2])
+        if checkdistance is None and desireddistance is None:
+            result = Pathfind(destination[0], destination[1], destination[2])
+        else:
+            check_flag = bool(checkdistance)
+            desired = int(desireddistance if desireddistance is not None else 1)
+            result = Pathfind(destination[0], destination[1], destination[2], check_flag, desired)
     else:
-        result = Pathfind(destination)
+        if checkdistance is None and desireddistance is None:
+            result = Pathfind(destination)
+        else:
+            check_flag = bool(checkdistance)
+            desired = int(desireddistance if desireddistance is not None else 1)
+            result = Pathfind(destination, check_flag, desired)
 
     Pause(settle_pause_ms)
     if not result:
-        ctx.fail(state_name, "Pathfind failed", {"destination": destination})
+        if fail_on_error:
+            ctx.fail(state_name, "Pathfind failed", telemetry_payload)
+        else:
+            Telemetry.warn(state_name, "Pathfind failed (non-fatal)", telemetry_payload)
         return False
 
     return True
@@ -339,5 +358,9 @@ def safe_move_type(ctx, state_name, graphic, source_alias, destination_alias, hu
     })
     MoveType(graphic, source_alias, destination_alias, -1, -1, 0, hue, amount)
     return True
+
+
+
+
 
 

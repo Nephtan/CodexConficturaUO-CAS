@@ -10,6 +10,7 @@ BOT_CONFIG = {
         "max_retries_per_state": 3,
         "action_settle_ms": 250,
         "pathfind_settle_ms": 350,
+        "object_use_range": 3,
         "gump_timeout_ms": 4500,
         "journal_timeout_ms": 4500,
         "context_timeout_ms": 3000,
@@ -51,6 +52,7 @@ BOT_CONFIG = {
         "mobile_search_range": 14,
         "mobile_search_order": "Next",
         "mobile_search_max_scan": 40,
+        "object_search_max_scan": 40,
         "race_shelf_graphic": 0x506C,
         "race_shelf_hue": 0x0ABE,
         "race_shelf_range": 8,
@@ -190,6 +192,8 @@ BOT_CONFIG = {
         }
     ]
 }
+
+
 
 
 
