@@ -1,5 +1,5 @@
 # Name: Confictura Gypsy Onboarding Config
-# Description: Deterministic interaction table for the gypsy tent, race shelf, Thuvia flow, and tarot exit.
+# Description: Deterministic interaction table for Thuvia-first onboarding, gypsy tent flow, race shelf, and tarot exit.
 # Author: ChatGPT Codex
 # Shard: Confictura
 
@@ -54,6 +54,33 @@ BOT_CONFIG = {
         "race_shelf_range": 8
     },
     "steps": [
+        {
+            "name": "MOVE_TO_THUVIA",
+            "action": "move_to_ref",
+            "ref": "thuvia_spot",
+            "within_distance": 1,
+            "avoid_exact_tile": True,
+            "skip_if_mode": "NEUTRAL"
+        },
+        {
+            "name": "SPEAK_THUVIA_CHOOSE",
+            "action": "speak",
+            "text": "choose",
+            "skip_if_mode": "NEUTRAL"
+        },
+        {
+            "name": "THUVIA_SELECT_MODE",
+            "action": "gump_rule",
+            "skip_if_mode": "NEUTRAL",
+            "rule": {
+                "name": "Thuvia PvP Mode",
+                "gump_key": "PKNONPK",
+                "text_any": [],
+                "button_from_mode": True,
+                "wait_timeout_ms": 0,
+                "marks_complete": False
+            }
+        },
         {
             "name": "MOVE_TO_GYPSY_SEAT",
             "action": "move_to_ref",
@@ -118,35 +145,6 @@ BOT_CONFIG = {
             }
         },
         {
-            "name": "MOVE_TO_THUVIA",
-            "action": "move_to_ref",
-            "ref": "thuvia_spot",
-            "within_distance": 1,
-            "avoid_exact_tile": True
-        },
-        {
-            "name": "SPEAK_THUVIA_CHOOSE",
-            "action": "speak",
-            "text": "choose"
-        },
-        {
-            "name": "THUVIA_SELECT_MODE",
-            "action": "gump_rule",
-            "rule": {
-                "name": "Thuvia PvP Mode",
-                "gump_key": "PKNONPK",
-                "text_any": [],
-                "button_from_mode": True,
-                "wait_timeout_ms": 0,
-                "marks_complete": False
-            }
-        },
-        {
-            "name": "RETURN_TO_GYPSY_SEAT",
-            "action": "move_to_ref",
-            "ref": "gypsy_seat"
-        },
-        {
             "name": "OPEN_GYPSY_CONTEXT_FINAL",
             "action": "mobile_context",
             "name_any_ref": "gypsy_name_any",
@@ -201,4 +199,3 @@ BOT_CONFIG = {
         }
     ]
 }
-

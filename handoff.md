@@ -1090,3 +1090,42 @@ Changes made:
 ## Known Fragilities
 - Historical handoff sections above this update still include older rename-era logs for traceability; runtime code no longer executes rename behavior.
 
+
+## Iteration Update (2026-03-07): Thuvia-First Route + Neutral Skip
+
+## Task Summary
+Adjusted onboarding route to reduce travel backtracking:
+- Thuvia flow now executes before moving to gypsy seat.
+- If `onboarding.thuvia_mode == "NEUTRAL"`, Thuvia steps are skipped entirely by policy.
+- Removed redundant `RETURN_TO_GYPSY_SEAT` step from the flow.
+
+Implementation notes:
+- `scripts/gypsy_onboarding_config.py`
+  - Reordered `steps` to start with:
+    - `MOVE_TO_THUVIA`
+    - `SPEAK_THUVIA_CHOOSE`
+    - `THUVIA_SELECT_MODE`
+  - Added `skip_if_mode: "NEUTRAL"` on all three Thuvia steps.
+  - Removed `RETURN_TO_GYPSY_SEAT`.
+- `scripts/gypsy_onboarding_controller.py`
+  - Extended `_step_enabled(...)` to honor per-step `skip_if_mode` (string or list/tuple).
+  - Skip telemetry now includes `enabled_flag`, `skip_if_mode`, and current `thuvia_mode`.
+
+## Testing Instructions
+1. Set `onboarding.thuvia_mode = "PVE"`.
+2. Run macro in starting area and confirm first executed action is `MOVE_TO_THUVIA`.
+3. Confirm flow then goes to `MOVE_TO_GYPSY_SEAT` and does not include `RETURN_TO_GYPSY_SEAT`.
+4. Set `onboarding.thuvia_mode = "NEUTRAL"`.
+5. Run again and confirm:
+   - `MOVE_TO_THUVIA`, `SPEAK_THUVIA_CHOOSE`, `THUVIA_SELECT_MODE` are skipped.
+   - First movement action is `MOVE_TO_GYPSY_SEAT`.
+
+## Expected Telemetry
+- Non-neutral modes:
+  - `[FSM][MOVE_TO_THUVIA][INFO] Executing onboarding step | ...`
+- Neutral mode:
+  - `[FSM][MOVE_TO_THUVIA][INFO] Step skipped by policy | skip_if_mode=NEUTRAL, thuvia_mode=NEUTRAL, ...`
+  - same for `SPEAK_THUVIA_CHOOSE` and `THUVIA_SELECT_MODE`.
+
+## Known Fragilities
+- If `thuvia_mode` contains unexpected text, mode-based button selection defaults to `NEUTRAL` behavior; keep values within `NEUTRAL|PVP|PVE`.

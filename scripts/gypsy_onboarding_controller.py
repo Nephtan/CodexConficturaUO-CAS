@@ -597,10 +597,30 @@ class StepExecutorState(State):
         Telemetry.info(self.key, "Entering STEP_EXECUTOR")
 
     def _step_enabled(self, ctx, step):
+        onboarding_cfg = ctx.config.get("onboarding", {})
+
         flag_name = step.get("enabled_flag")
-        if flag_name is None or flag_name == "":
-            return True
-        return bool(ctx.config.get("onboarding", {}).get(flag_name, False))
+        if not (flag_name is None or flag_name == ""):
+            if not bool(onboarding_cfg.get(flag_name, False)):
+                return False
+
+        skip_if_mode = step.get("skip_if_mode", None)
+        if skip_if_mode is not None:
+            current_mode = str(onboarding_cfg.get("thuvia_mode", "NEUTRAL")).strip().upper()
+
+            if isinstance(skip_if_mode, list) or isinstance(skip_if_mode, tuple):
+                idx = 0
+                while idx < len(skip_if_mode):
+                    candidate_mode = str(skip_if_mode[idx]).strip().upper()
+                    idx += 1
+                    if candidate_mode != "" and candidate_mode == current_mode:
+                        return False
+            else:
+                candidate_mode = str(skip_if_mode).strip().upper()
+                if candidate_mode != "" and candidate_mode == current_mode:
+                    return False
+
+        return True
 
     def _resolve_rule(self, ctx, raw_rule):
         onboarding_cfg = ctx.config.get("onboarding", {})
@@ -1111,10 +1131,11 @@ class StepExecutorState(State):
 
         if not self._step_enabled(ctx, step):
             Telemetry.info(step_name, "Step skipped by policy", {
-                "enabled_flag": step.get("enabled_flag")
+                "enabled_flag": step.get("enabled_flag"),
+                "skip_if_mode": step.get("skip_if_mode"),
+                "thuvia_mode": str(ctx.config.get("onboarding", {}).get("thuvia_mode", "NEUTRAL")).strip().upper()
             })
             return True
-
         Telemetry.info(step_name, "Executing onboarding step", {
             "index": ctx.onboarding_index + 1,
             "total_steps": len(ctx.config.get("steps", [])),
@@ -1282,4 +1303,7 @@ def run_gypsy_onboarding_controller(config):
 
 
 run_gypsy_onboarding_controller(BOT_CONFIG)
+
+
+
 
