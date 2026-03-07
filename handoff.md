@@ -704,3 +704,49 @@ Changes made:
 
 ## Known Fragilities
 - Any-open reply fallback is intentionally scoped to race shelf selection only. If multiple actionable gumps are open at that exact moment, reply targeting can still be ambiguous.
+
+---
+
+# Iteration Update (2026-03-07): Race Shelf Recorder Alignment + Rename Optional Skip
+
+## Task Summary
+Integrated your recorded ClassicAssist macro output as source-of-truth for race shelf behavior and removed rename as a hard blocker when no rename contract is present.
+
+Recorder facts incorporated:
+- Race shelf gump id: `0x54C2BB00`
+- Help gump id observed: `0x5C045DAC`
+- Human category selection button observed: `123456789`
+- Race confirm OK button: `1000`
+
+Changes made:
+- `scripts/gypsy_onboarding_config.py`
+  - Added `onboarding.gump_id_overrides["RACE_POTIONS"] = 0x54C2BB00`
+  - Added `onboarding.race_category_button_id = 123456789`
+  - Kept `onboarding.race_button_id = 1000`
+  - Added explicit two-step race shelf flow:
+    - `RACE_SHELF_SELECT_CATEGORY` (category button)
+    - `RACE_SHELF_SELECT` (OK/confirm button)
+  - Set `onboarding.rename_allow_skip = True` so missing rename object does not halt onboarding.
+- Existing single-retry policy remains in effect:
+  - `runtime.max_retries_per_state = 1`
+
+## Testing Instructions
+1. Re-run `gypsy_onboarding_controller.py` in the starting area.
+2. Confirm sequence:
+   - `RACE_SHELF_OPEN`
+   - `RACE_SHELF_SELECT_CATEGORY`
+   - `RACE_SHELF_SELECT`
+3. Confirm either:
+   - rename contract is found and rename runs, or
+   - rename is skipped with warning policy and flow continues.
+4. Send logs from first `RACE_SHELF_SELECT_CATEGORY` through `THUVIA_SELECT_MODE` (or fail point).
+
+## Expected Telemetry
+- `[FSM][RACE_SHELF_SELECT_CATEGORY][INFO] Gump rule matched | ... gump_id=0x54C2BB00 ...`
+- `[FSM][RACE_SHELF_SELECT][INFO] Gump rule matched | ... button_id=1000 ...`
+- If contract missing:
+  - `[FSM][RENAME_CHARACTER][WARN] Rename failed for all candidates; skipping by policy | ...`
+
+## Known Fragilities
+- Rename contract location is shard/character-state dependent. This iteration intentionally allows progression when it is unavailable to keep onboarding autonomous.
+- If race shelf UI content changes, category button ids may need minor config retuning.

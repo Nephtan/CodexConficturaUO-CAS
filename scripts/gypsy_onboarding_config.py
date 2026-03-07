@@ -25,9 +25,10 @@ BOT_CONFIG = {
         "unknown_gump_is_fatal": True,
         "allow_any_open_gump_fallback": False,
         "enable_race_shelf": True,
+        "race_category_button_id": 123456789,
         "race_button_id": 1000,
         "enable_rename": True,
-        "rename_allow_skip": False,
+        "rename_allow_skip": True,
         "rename_desired_names": [
             "Wayfarer",
             "Ashwander",
@@ -41,7 +42,8 @@ BOT_CONFIG = {
         # Optional manual overrides if runtime gump ids differ on your server build.
         # Keys can be gump_key values (example: "GYPSY_TAROT") or full type names.
         "gump_id_overrides": {
-            "GYPSY_TAROT": 0x758C021A
+            "GYPSY_TAROT": 0x758C021A,
+            "RACE_POTIONS": 0x54C2BB00
         }
     },
     "world_refs": {
@@ -97,6 +99,19 @@ BOT_CONFIG = {
             "range_ref": "race_shelf_range"
         },
         {
+            "name": "RACE_SHELF_SELECT_CATEGORY",
+            "enabled_flag": "enable_race_shelf",
+            "action": "gump_rule",
+            "rule": {
+                "name": "Race Shelf Category Selection",
+                "gump_key": "RACE_POTIONS",
+                "text_any": ["GYPSY POTION SHELF", "CATEGORIES"],
+                "button_from_config": "race_category_button_id",
+                "wait_timeout_ms": 0,
+                "marks_complete": False
+            }
+        },
+        {
             "name": "RACE_SHELF_SELECT",
             "enabled_flag": "enable_race_shelf",
             "action": "gump_rule",
@@ -105,7 +120,6 @@ BOT_CONFIG = {
                 "gump_key": "RACE_POTIONS",
                 "text_any": ["GYPSY POTION SHELF", "CATEGORIES"],
                 "button_from_config": "race_button_id",
-                "allow_any_open_reply": True,
                 "wait_timeout_ms": 0,
                 "marks_complete": False
             }
@@ -193,11 +207,3 @@ BOT_CONFIG = {
         }
     ]
 }
-
-
-
-
-
-
-
-
