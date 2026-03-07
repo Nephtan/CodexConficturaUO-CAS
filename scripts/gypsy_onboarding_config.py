@@ -43,7 +43,8 @@ BOT_CONFIG = {
         # Keys can be gump_key values (example: "GYPSY_TAROT") or full type names.
         "gump_id_overrides": {
             "GYPSY_TAROT": 0x758C021A,
-            "RACE_POTIONS": 0x54C2BB00
+            "RACE_POTIONS": 0x54C2BB00,
+            "PKNONPK": 0x9DD37300
         }
     },
     "world_refs": {
@@ -145,7 +146,7 @@ BOT_CONFIG = {
             "rule": {
                 "name": "Thuvia PvP Mode",
                 "gump_key": "PKNONPK",
-                "text_any": ["Confictura Consensual PvP System"],
+                "text_any": [],
                 "button_from_mode": True,
                 "wait_timeout_ms": 0,
                 "marks_complete": False
@@ -207,3 +208,5 @@ BOT_CONFIG = {
         }
     ]
 }
+
+

@@ -750,3 +750,38 @@ Changes made:
 ## Known Fragilities
 - Rename contract location is shard/character-state dependent. This iteration intentionally allows progression when it is unavailable to keep onboarding autonomous.
 - If race shelf UI content changes, category button ids may need minor config retuning.
+
+---
+
+# Iteration Update (2026-03-07): Thuvia Recorder Alignment (Gump ID Override)
+
+## Task Summary
+Aligned Thuvia mode-selection handling to your recorded macro values.
+
+Recorder source-of-truth:
+- `WaitForGump(0x9dd37300, 5000)`
+- `ReplyGump(0x9dd37300, 1)` for PvP
+- `ReplyGump(0x9dd37300, 2)` for PvE
+- `ReplyGump(0x9dd37300, 0)` for Neutral
+
+Changes made:
+- `scripts/gypsy_onboarding_config.py`
+  - Added override:
+    - `onboarding.gump_id_overrides["PKNONPK"] = 0x9DD37300`
+  - Relaxed Thuvia rule text gate to avoid false negatives from content mismatch:
+    - `THUVIA_SELECT_MODE.rule.text_any = []`
+  - Existing button mapping logic remains unchanged:
+    - `thuvia_mode -> button_id` via `button_from_mode`
+
+## Testing Instructions
+1. Run `gypsy_onboarding_controller.py`.
+2. Confirm after `SPEAK_THUVIA_CHOOSE` the next step does not wait on old hash id.
+3. In `THUVIA_SELECT_MODE`, verify expected id is now `0x9DD37300`.
+4. Confirm transition continues to `RETURN_TO_GYPSY_SEAT`.
+
+## Expected Telemetry
+- `[FSM][THUVIA_SELECT_MODE][DEBUG/INFO] ... expected_gump_id=0x9DD37300 ...`
+- `[FSM][THUVIA_SELECT_MODE][INFO] Gump rule matched | button_id=<0|1|2>, gump_id=0x9DD37300, ...`
+
+## Known Fragilities
+- If shard changes Thuvia gump id in future updates, adjust override only (no controller logic changes needed).
