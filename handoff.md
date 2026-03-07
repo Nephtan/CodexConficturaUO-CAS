@@ -1049,3 +1049,44 @@ Change:
 
 Expected effect:
 - Rename step now validates based on actual ability to find/use the Visitor Journal, not on pre-positioning success.
+
+## Iteration Update (2026-03-07): Rename Feature Removal (Project Runtime)
+
+## Task Summary
+Removed character-rename functionality from the runtime onboarding project code path.
+
+Changes made:
+- `scripts/gypsy_onboarding_config.py`
+  - Removed all rename config keys and world refs.
+  - Removed `RENAME_CHARACTER` step from `steps`.
+  - Onboarding sequence is now 14 total steps.
+- `scripts/gypsy_onboarding_controller.py`
+  - Removed `rename_via_journal` action dispatch.
+  - Removed `_rename_via_journal(...)` function.
+  - Removed rename bootstrap counters/fields.
+  - Removed rename field from completion telemetry.
+  - Updated controller metadata description to reflect no rename path.
+- `scripts/confictura_bot/gump_ids.py`
+  - Removed `NAME_ALTER` and `NAME_CHANGE` constants.
+
+## Testing Instructions
+1. Start in the gypsy tent and run the onboarding macro.
+2. Confirm total step count logs as `step_count=14` during `BOOTSTRAP`.
+3. Confirm flow proceeds:
+   - `GYPSY_OPEN_DECK`
+   - `RACE_SHELF_OPEN`
+   - `RACE_SHELF_SELECT_CATEGORY`
+   - `RACE_SHELF_SELECT`
+   - `MOVE_TO_THUVIA`
+4. Confirm there are no `RENAME_CHARACTER` logs and no rename retries.
+5. Confirm flow reaches `COMPLETE_STOP` after teleport success verification.
+
+## Expected Telemetry
+- `[FSM][BOOTSTRAP][INFO] Bootstrap ready | ..., step_count=14`
+- No telemetry entries containing `RENAME_CHARACTER`.
+- Standard completion:
+  - `[FSM][COMPLETE_STOP][INFO] Gypsy onboarding complete | completed_steps=14, total_steps=14, ...`
+
+## Known Fragilities
+- Historical handoff sections above this update still include older rename-era logs for traceability; runtime code no longer executes rename behavior.
+

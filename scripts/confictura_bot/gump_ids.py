@@ -8,8 +8,6 @@ KNOWN_GUMP_TYPES = {
     "GYPSY_TAROT": "Server.Gumps.GypsyTarotGump",
     "RACE_POTIONS": "Server.Items.RacePotions+RacePotionsGump",
     "PKNONPK": "Server.Gumps.PKNONPK",
-    "NAME_ALTER": "Server.Gumps.NameAlterGump",
-    "NAME_CHANGE": "Server.Gumps.NameChangeGump"
 }
 
 
@@ -135,3 +133,4 @@ def resolve_gump_id(
 
 def gump_hex(gump_id):
     return "0x{0:08X}".format(_to_uint32(gump_id))
+

@@ -1,5 +1,5 @@
 # Name: Confictura Gypsy Onboarding Config
-# Description: Deterministic interaction table for the gypsy tent, race shelf, rename journal, and Thuvia flow.
+# Description: Deterministic interaction table for the gypsy tent, race shelf, Thuvia flow, and tarot exit.
 # Author: ChatGPT Codex
 # Shard: Confictura
 
@@ -15,8 +15,7 @@ BOT_CONFIG = {
         "journal_timeout_ms": 4500,
         "context_timeout_ms": 3000,
         "post_context_gump_timeout_ms": 4500,
-        "allow_context_success_without_packet": True,
-        "rename_apply_pause_ms": 500
+        "allow_context_success_without_packet": True
     },
     "safety": {
         "fail_safe_stop": True
@@ -27,13 +26,6 @@ BOT_CONFIG = {
         "enable_race_shelf": True,
         "race_category_button_id": 123456789,
         "race_button_id": 1000,
-        "enable_rename": True,
-        "rename_allow_skip": False,
-        "rename_desired_names": [
-            "Wayfarer",
-            "Ashwander",
-            "Sablethorn"
-        ],
         "thuvia_mode": "NEUTRAL",
         "tarot_card_button_id": 101,
         "completion_journal_any": [
@@ -59,12 +51,7 @@ BOT_CONFIG = {
         "object_search_max_scan": 40,
         "race_shelf_graphic": 0x506C,
         "race_shelf_hue": 0x0ABE,
-        "race_shelf_range": 8,
-        "rename_journal_graphic": 0x14EF,
-        "rename_journal_hue": -1,
-        "rename_journal_range": 12,
-        "rename_journal_name_any": ["visitor journal", "name change contract"],
-        "rename_journal_spot": (3570, 3400, 0)
+        "race_shelf_range": 8
     },
     "steps": [
         {
@@ -80,7 +67,9 @@ BOT_CONFIG = {
             "entry_index": 1,
             "context_entries": [1],
             "require_ref": "gypsy_seat",
-            "expect_gump_after_context": True, "expect_gump_keys": ["GYPSY_TAROT"], "post_context_gump_timeout_ms": 4500
+            "expect_gump_after_context": True,
+            "expect_gump_keys": ["GYPSY_TAROT"],
+            "post_context_gump_timeout_ms": 4500
         },
         {
             "name": "GYPSY_OPEN_DECK",
@@ -129,11 +118,6 @@ BOT_CONFIG = {
             }
         },
         {
-            "name": "RENAME_CHARACTER",
-            "enabled_flag": "enable_rename",
-            "action": "rename_via_journal"
-        },
-        {
             "name": "MOVE_TO_THUVIA",
             "action": "move_to_ref",
             "ref": "thuvia_spot",
@@ -170,7 +154,9 @@ BOT_CONFIG = {
             "entry_index": 1,
             "context_entries": [1],
             "require_ref": "gypsy_seat",
-            "expect_gump_after_context": True, "expect_gump_keys": ["GYPSY_TAROT"], "post_context_gump_timeout_ms": 4500
+            "expect_gump_after_context": True,
+            "expect_gump_keys": ["GYPSY_TAROT"],
+            "post_context_gump_timeout_ms": 4500
         },
         {
             "name": "GYPSY_OPEN_DECK_FINAL",

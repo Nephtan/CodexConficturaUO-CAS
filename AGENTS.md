@@ -122,6 +122,5 @@ Confictura is highly customized. Treat shard-specific behavior as the default, n
 * **Critical steps must fail-stop by default.** Do not silently skip them.
 * **Skip behavior must be explicit policy, disabled by default, and named in config.**
 * **If a step is policy-skipped, telemetry must include:** step name, skip flag, and exact reason.
-* **Visitor Journal rename path is treated as shard-specific and must target the actual start-area object definition, not a generic rename assumption.**
 \</INSTRUCTIONS\>
 

@@ -1,5 +1,5 @@
 # Name: Confictura Gypsy Onboarding Controller
-# Description: Executes autonomous gypsy tent onboarding (race shelf, rename journal, Thuvia, tarot) via deterministic step table.
+# Description: Executes autonomous gypsy tent onboarding (race shelf, Thuvia, tarot) via deterministic step table.
 # Author: ChatGPT Codex
 # Shard: Confictura
 
@@ -581,8 +581,6 @@ class BootstrapState(State):
 
         ctx.onboarding_index = 0
         ctx.onboarding_started_name = Name("self")
-        ctx.onboarding_last_rename_name = ""
-        ctx.onboarding_rename_attempts = 0
 
         Telemetry.info(self.key, "Bootstrap ready", {
             "initial_name": ctx.onboarding_started_name,
@@ -1058,120 +1056,6 @@ class StepExecutorState(State):
         wait_result = self._wait_and_apply_rule(ctx, step_name, rule)
         return wait_result
 
-    def _rename_via_journal(self, ctx, step_name):
-        runtime_cfg = ctx.config.get("runtime", {})
-        onboarding_cfg = ctx.config.get("onboarding", {})
-
-        old_name = Name("self")
-        desired_names = onboarding_cfg.get("rename_desired_names", [])
-
-        if len(desired_names) == 0:
-            ctx.fail(step_name, "Rename enabled but no rename_desired_names configured")
-            return False
-
-        desired_match = False
-        for candidate_name in desired_names:
-            if str(candidate_name).lower() == str(old_name).lower():
-                desired_match = True
-                break
-
-        if desired_match:
-            Telemetry.info(step_name, "Current name already acceptable", {"name": old_name})
-            return True
-
-        rename_ref = _resolve_world_ref(ctx, "rename_journal_spot")
-        if isinstance(rename_ref, tuple) and len(rename_ref) == 3:
-            Telemetry.info(step_name, "Pathfinding near Visitor Journal", {
-                "ref": "rename_journal_spot",
-                "x": rename_ref[0],
-                "y": rename_ref[1],
-                "z": rename_ref[2],
-                "desired_distance": 2
-            })
-            if not _ensure_near_ref_tile(ctx, step_name, "rename_journal_spot", runtime_cfg, 2, False):
-                Telemetry.warn(step_name, "Unable to path near Visitor Journal; continuing with direct object lookup", {
-                    "ref": "rename_journal_spot",
-                    "fallback": "findtype_by_graphic_hue_name"
-                })
-        rename_rule_template = {
-            "name": "Rename Character",
-            "gump_key": "NAME_ALTER",
-            "text_any": [],
-            "button_id": 1,
-            "wait_timeout_ms": 0,
-            "marks_complete": False
-        }
-
-        idx = 0
-        while idx < len(desired_names):
-            candidate = str(desired_names[idx]).strip()
-            idx += 1
-            if candidate == "":
-                continue
-
-            Telemetry.info(step_name, "Rename attempt", {
-                "candidate": candidate,
-                "attempt_index": idx,
-                "total_candidates": len(desired_names)
-            })
-
-            use_step = {
-                "graphic_ref": "rename_journal_graphic",
-                "hue_ref": "rename_journal_hue",
-                "range_ref": "rename_journal_range",
-                "name_any_ref": "rename_journal_name_any",
-                "pathfind_desired_distance": 2
-            }
-            if not self._execute_use_object_ref(ctx, step_name, use_step):
-                continue
-
-            rename_rule = _copy_dict(rename_rule_template)
-            rename_rule["text_entries"] = {1: candidate}
-
-            result = self._wait_and_apply_rule(ctx, step_name, rename_rule)
-            if result == "FATAL_STOP":
-                return "FATAL_STOP"
-            if not result:
-                continue
-
-            Pause(runtime_cfg.get("rename_apply_pause_ms", 500))
-            current_name = Name("self")
-
-            if str(current_name).lower() == str(candidate).lower():
-                ctx.onboarding_last_rename_name = current_name
-                ctx.onboarding_rename_attempts += 1
-                Telemetry.info(step_name, "Rename succeeded", {
-                    "new_name": current_name,
-                    "old_name": old_name
-                })
-                return True
-
-            if str(current_name).lower() == str(old_name).lower():
-                Telemetry.error(step_name, "Rename no-op detected after gump submit", {
-                    "candidate": candidate,
-                    "current_name": current_name,
-                    "hint": "NameAlterGump dupe-check/no-op path likely triggered"
-                })
-            else:
-                Telemetry.warn(step_name, "Name changed to unexpected value", {
-                    "expected": candidate,
-                    "actual": current_name
-                })
-                ctx.onboarding_last_rename_name = current_name
-                return True
-
-        if onboarding_cfg.get("rename_allow_skip", False):
-            Telemetry.warn(step_name, "Rename failed for all candidates; skipping by policy", {
-                "candidate_count": len(desired_names)
-            })
-            return True
-
-        ctx.fail(step_name, "Rename failed for all candidate names", {
-            "candidate_count": len(desired_names),
-            "current_name": Name("self")
-        })
-        return False
-
     def _execute_wait_journal_any(self, ctx, step_name, step):
         runtime_cfg = ctx.config.get("runtime", {})
         onboarding_cfg = ctx.config.get("onboarding", {})
@@ -1251,9 +1135,6 @@ class StepExecutorState(State):
 
         if action == "gump_rule":
             return self._execute_gump_rule(ctx, step_name, step)
-
-        if action == "rename_via_journal":
-            return self._rename_via_journal(ctx, step_name)
 
         if action == "wait_journal_any":
             return self._execute_wait_journal_any(ctx, step_name, step)
@@ -1339,8 +1220,7 @@ class CompleteStopState(State):
             "completed_steps": ctx.onboarding_index,
             "total_steps": len(ctx.config.get("steps", [])),
             "starting_name": ctx.onboarding_started_name,
-            "current_name": Name("self"),
-            "last_rename": ctx.onboarding_last_rename_name
+            "current_name": Name("self")
         })
 
         ctx.stop("Starting-area onboarding finished")
@@ -1402,7 +1282,4 @@ def run_gypsy_onboarding_controller(config):
 
 
 run_gypsy_onboarding_controller(BOT_CONFIG)
-
-
-
 
