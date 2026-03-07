@@ -581,3 +581,40 @@ Rationale:
 - If shard code changes gypsy gump id again, update `onboarding.gump_id_overrides` instead of editing controller logic.
 - `allow_any_open_gump_fallback` is intentionally disabled to avoid wrong-gump replies while multiple gumps are open.
 - Context menu index assumptions are now strict (`1`) by design for deterministic behavior; if server-side context entries change, this will fail fast with clear telemetry.
+
+---
+
+# Iteration Update (2026-03-07): ReplyGump .NET Argument Coercion Fix
+
+## Task Summary
+Fixed the runtime crash after successful gypsy gump match/reply:
+- `Unhandled exception in tick | exception=expected Array[int], got list`
+
+Root cause:
+- `safe_reply_gump(...)` always called the 4-argument `ReplyGump(...)` overload and passed Python `list`/`dict` objects.
+- IronPython/ClassicAssist expected .NET types (`Int32[]` and `Dictionary[Int32, String]`) for that overload.
+
+Changes made:
+- `scripts/confictura_bot/safe_api.py`
+  - `safe_reply_gump(...)` now uses `ReplyGump(gump_id, button_id)` when there are no switches or text entries.
+  - For payload replies, it now attempts to coerce payloads to:
+    - `System.Array[Int32]` for switches
+    - `System.Collections.Generic.Dictionary[Int32, String]` for text entries
+  - Added warning telemetry if coercion fails before 4-arg reply call.
+
+## Testing Instructions
+1. Re-run `gypsy_onboarding_controller.py` from the starting area.
+2. Confirm `GYPSY_OPEN_DECK` no longer crashes after:
+   - `Preparing gump reply ... gump_id=0x758C021A ...`
+   - `Replying to gump ...`
+3. Verify next transition reaches `RACE_SHELF_OPEN`.
+4. If a new failure occurs, send logs from first `GYPSY_OPEN_DECK` through first `RECOVER` or `FATAL_STOP`.
+
+## Expected Telemetry
+- `[FSM][GYPSY_OPEN_DECK][DEBUG] Preparing gump reply | button_id=99, gump_id=0x758C021A, ...`
+- `[FSM][GYPSY_OPEN_DECK][INFO] Replying to gump | button_id=99, gump_id=0x758C021A`
+- Transition to:
+  - `[FSM][RACE_SHELF_OPEN][INFO] Executing onboarding step ...`
+
+## Known Fragilities
+- If future steps require non-empty text entries/switches and .NET type coercion fails on a specific client build, telemetry now calls this out explicitly for targeted adjustment.

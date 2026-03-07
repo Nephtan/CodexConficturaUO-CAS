@@ -247,7 +247,56 @@ def safe_reply_gump(ctx, state_name, gump_id, button_id, timeout_ms, switches=No
         "gump_id": gump_hex(gump_id),
         "button_id": button_id
     })
-    ReplyGump(gump_id, button_id, switches, normalized_entries)
+
+    has_switches = len(switches) > 0
+    has_text_entries = len(normalized_entries) > 0
+
+    # Prefer the simple overload when no optional payload is needed.
+    if not has_switches and not has_text_entries:
+        ReplyGump(gump_id, button_id)
+        return True
+
+    dotnet_switches = switches
+    dotnet_entries = normalized_entries
+
+    # ClassicAssist expects Int32[] and Dictionary[Int32, String] for the 4-arg overload.
+    try:
+        from System import Array
+        from System import Int32
+        from System import String
+        from System.Collections.Generic import Dictionary
+
+        coerced_switches = []
+        for switch_value in switches:
+            try:
+                coerced_switches.append(int(switch_value))
+            except Exception:
+                continue
+
+        dotnet_switches = Array[Int32](coerced_switches)
+        dotnet_entries = Dictionary[Int32, String]()
+
+        for key in normalized_entries.keys():
+            try:
+                entry_key = Int32(int(key))
+            except Exception:
+                continue
+
+            try:
+                entry_value = String(unicode(normalized_entries.get(key, u"")))
+            except Exception:
+                try:
+                    entry_value = String(str(normalized_entries.get(key, "")))
+                except Exception:
+                    entry_value = String("")
+
+            dotnet_entries[entry_key] = entry_value
+    except Exception as ex:
+        Telemetry.warn(state_name, "Unable to coerce gump payload to .NET types", {
+            "exception": str(ex)
+        })
+
+    ReplyGump(gump_id, button_id, dotnet_switches, dotnet_entries)
     return True
 
 
@@ -290,4 +339,5 @@ def safe_move_type(ctx, state_name, graphic, source_alias, destination_alias, hu
     })
     MoveType(graphic, source_alias, destination_alias, -1, -1, 0, hue, amount)
     return True
+
 
