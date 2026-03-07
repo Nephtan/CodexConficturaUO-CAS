@@ -75,4 +75,34 @@ Never assume the purpose of a file based on outdated docstrings or filenames. Be
 2. Compare the code against /ConficturaRepositoryDocs to ensure custom shard mechanics aren't being overwritten.  
 3. Update mismatched documentation autonomously before touching the execution logic.
 
+## **9\. ClassicAssist Runtime Realities (Learned On Live Runs)**
+
+These are mandatory implementation patterns validated during real execution on Confictura:
+
+* **API Scope Publication Is Required:** Imported modules may not see ClassicAssist commands (`Pause`, `Name`, `WarMode`, etc.) by default. At controller startup, publish known ClassicAssist symbols into `__builtin__` and log publish count telemetry.
+* **Do Not Trust `callable()` For .NET Macro Commands:** IronPython interop may report command objects inconsistently. Do not gate command binding purely on `callable()` checks.
+* **Purge Import Cache On Every Hotkey Run:** ClassicAssist can cache `sys.modules` between macro invocations. Before importing framework modules, purge `confictura_bot*` (and local config module) to ensure latest on-disk code executes.
+* **Fail Loudly On Missing Core Commands:** If `Pause` or equivalent core pacing command is unavailable, emit explicit fatal telemetry and stop cleanly. Never continue in undefined timing state.
+
+## **10\. Target/Mobile Acquisition Policy (Crowded NPC Areas)**
+
+* **Avoid Single-Path Selector Logic:** Do not rely on one selector mode (example: only `GetFriend(..., "Closest", ...)`).
+* **Use Multi-Pass Iteration:** Scan with deterministic passes (example: `GetEnemy(["Any"], ..., "Next", ...)` then `GetFriend(["Any"], ..., "Next", ...)`) with bounded scan counts.
+* **Always Capture Evidence On Match Failure:** Include `observed_names`, `search_range`, and scan mode/order in telemetry when mobile/object acquisition fails.
+* **Token Lists Must Be Shard-Realistic:** Config name tokens must include shard-specific names (example: `"arabelle"` in addition to `"gypsy"`).
+
+## **11\. Telemetry Contract Addendum**
+
+In addition to existing telemetry rules, every state-machine iteration must provide:
+
+1. **State Transition Reasoning:** Log `from_state`, `reason`, transition count.
+2. **Action Preconditions:** Log the exact selector strategy/ranges before scans.
+3. **Structured Failure Payloads:** Include actionable key-value context (`expected`, `observed`, `timeouts`, `retries`, ids/names).
+4. **Deterministic Stop Cause:** Final stop must include the last failed step and explicit failure reason.
+
+## **12\. Loader And Execution Hygiene**
+
+* Use a thin macro loader that appends repo `scripts` path and executes controller entry file.
+* Keep controller modules self-healing for iterative development: import cache purge + API publication should happen automatically.
+* Keep all behavior policy in config dictionaries so operator can tune without code edits.
 \</INSTRUCTIONS\>
