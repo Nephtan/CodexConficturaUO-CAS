@@ -120,8 +120,11 @@ def _build_segment_candidates(destination, max_step):
     )
 
     remaining_distance = _chebyshev_distance(current, destination_point)
-    if remaining_distance <= max_step:
-        return [destination_point]
+    step_limit = max_step
+    if remaining_distance < step_limit:
+        step_limit = remaining_distance
+    if step_limit < 1:
+        step_limit = 1
 
     dx = destination_point[0] - current[0]
     dy = destination_point[1] - current[1]
@@ -131,7 +134,7 @@ def _build_segment_candidates(destination, max_step):
     if max_axis <= 0:
         return [destination_point]
 
-    scale = float(max_step) / float(max_axis)
+    scale = float(step_limit) / float(max_axis)
 
     step_dx = int(dx * scale)
     step_dy = int(dy * scale)
@@ -150,20 +153,59 @@ def _build_segment_candidates(destination, max_step):
         current[2] + step_dz
     )
 
+    axis_x_step = _clamp_axis_delta(dx, step_limit)
+    axis_y_step = _clamp_axis_delta(dy, step_limit)
+    axis_z_step = _clamp_axis_delta(dz, step_limit)
+
     axis_x = (
-        current[0] + _clamp_axis_delta(dx, max_step),
+        current[0] + axis_x_step,
         current[1],
         current[2]
     )
 
     axis_y = (
         current[0],
-        current[1] + _clamp_axis_delta(dy, max_step),
+        current[1] + axis_y_step,
         current[2]
     )
 
+    short_step = step_limit / 2
+    if short_step < 1:
+        short_step = 1
+
+    short_primary = (
+        current[0] + _clamp_axis_delta(dx, short_step),
+        current[1] + _clamp_axis_delta(dy, short_step),
+        current[2] + _clamp_axis_delta(dz, short_step)
+    )
+
+    lateral_a = current
+    lateral_b = current
+    lateral_c = current
+    lateral_d = current
+
+    if abs(dy) >= abs(dx):
+        lateral_a = (current[0] + 1, current[1] + axis_y_step, current[2] + axis_z_step)
+        lateral_b = (current[0] - 1, current[1] + axis_y_step, current[2] + axis_z_step)
+        lateral_c = (current[0] + 1, current[1], current[2])
+        lateral_d = (current[0] - 1, current[1], current[2])
+    else:
+        lateral_a = (current[0] + axis_x_step, current[1] + 1, current[2] + axis_z_step)
+        lateral_b = (current[0] + axis_x_step, current[1] - 1, current[2] + axis_z_step)
+        lateral_c = (current[0], current[1] + 1, current[2])
+        lateral_d = (current[0], current[1] - 1, current[2])
+
     candidates = []
-    candidate_pool = [primary, axis_x, axis_y]
+    candidate_pool = [
+        primary,
+        axis_x,
+        axis_y,
+        short_primary,
+        lateral_a,
+        lateral_b,
+        lateral_c,
+        lateral_d
+    ]
 
     idx = 0
     while idx < len(candidate_pool):
@@ -1004,8 +1046,8 @@ class TravelToWaypointState(State):
         if min_progress < 1:
             min_progress = 1
 
-        strategy_name = "safe_pathfind_direct"
-        if initial_distance_to_waypoint > max_hop_distance:
+        strategy_name = "movement_not_required"
+        if initial_distance_to_waypoint > waypoint["within_distance"]:
             strategy_name = "safe_pathfind_segmented"
 
         Telemetry.info(self.key, "Action preconditions", {
@@ -1019,7 +1061,7 @@ class TravelToWaypointState(State):
             "max_hop_distance": max_hop_distance
         })
 
-        if initial_distance_to_waypoint > max_hop_distance:
+        if initial_distance_to_waypoint > waypoint["within_distance"]:
             segment_candidates = _build_segment_candidates(destination, max_hop_distance)
             candidate_order = []
 
@@ -1073,7 +1115,7 @@ class TravelToWaypointState(State):
                     )
                 )
 
-                if attempt_ok and progress_candidate >= min_progress:
+                if progress_candidate >= min_progress:
                     segment_progress = True
                     segment_target = candidate
                     segment_before = before_candidate
@@ -1124,11 +1166,8 @@ class TravelToWaypointState(State):
             Pause(_to_int(runtime_cfg.get("segment_stall_pause_ms", 250), 250))
             return "TRAVEL_TO_WAYPOINT"
 
-        if not safe_pathfind(ctx, self.key, destination, runtime_cfg.get("pathfind_settle_ms", 350)):
-            return "RECOVER"
-
         ctx.segment_no_progress_count = 0
-        distance_to_waypoint = _distance_to_point(destination)
+        distance_to_waypoint = initial_distance_to_waypoint
         ctx.current_waypoint = waypoint
         if distance_to_waypoint > waypoint["within_distance"]:
             ctx.fail(self.key, "Unable to reach waypoint proximity", {
@@ -1355,6 +1394,9 @@ class RecoverState(State):
     key = "RECOVER"
 
     def enter(self, ctx):
+        if ctx.last_failed_state == "TRAVEL_TO_WAYPOINT":
+            ctx.segment_no_progress_count = 0
+
         Telemetry.warn(self.key, "Entering RECOVER", {
             "last_failed_state": ctx.last_failed_state,
             "last_error": ctx.last_error
@@ -1473,6 +1515,12 @@ def run_britain_thief_recon_controller(config):
 
 
 run_britain_thief_recon_controller(BOT_CONFIG)
+
+
+
+
+
+
 
 
 

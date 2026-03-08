@@ -1357,3 +1357,153 @@ Fixes applied:
 ## Known Fragilities
 - If terrain repeatedly blocks all candidate hops, controller will still fail-stop when `stall_count > segment_no_progress_tolerance` by design.
 - If movement remains too slow, increase `segment_stall_pause_ms` before relaxing tolerance.
+
+## Iteration Addendum (2026-03-08): Segment Progress Classification + Lateral Escape Candidates
+
+## Task Summary
+Live telemetry exposed two movement bugs near `remaining_distance ~16`:
+1. Segment attempts with `ok=False` but real movement (`before->after`) were treated as no-progress.
+2. One-axis approach produced single repeated candidate (`3006,1104,0`) with no lateral escape options.
+
+Fixes applied:
+- `scripts/britain_thief_recon_controller.py`
+  - Segment success now keys on measured movement (`progress_candidate >= min_progress`) regardless of `Pathfind` boolean return.
+  - `_build_segment_candidates(...)` now emits expanded pool:
+    - primary, axis-x, axis-y, short-forward
+    - plus lateral sidestep candidates to break one-axis stalls.
+  - `RECOVER.enter` resets `segment_no_progress_count` for `TRAVEL_TO_WAYPOINT` retries.
+
+## Testing Instructions
+1. Re-run from the current stuck corridor area.
+2. Confirm segment logs now show:
+   - additional sidestep candidates in `candidate_order` when path narrows.
+   - progress accepted even when candidate row has `ok=False` but `progress>0`.
+3. Confirm no immediate repeat-lock on `3006,1104,0` unless all lateral escapes are blocked.
+
+## Expected Telemetry
+- `[FSM][TRAVEL_TO_WAYPOINT][INFO] Segment path preconditions | candidate_count=...` with >1 candidate near stalls.
+- `[FSM][TRAVEL_TO_WAYPOINT][INFO] Segment path progress | ...` on any measured distance drop, including prior `ok=False` movement cases.
+
+## Iteration Addendum (2026-03-08): Close-Range Segment Routing (No Direct Flip)
+
+## Task Summary
+Live run reached near-target corridor but failed when logic switched from segmented to direct pathing at `remaining_distance <= max_hop_distance`.
+- Direct call to exact tile (`3006,1108`) failed repeatedly despite nearby progress.
+
+Fixes applied:
+- `scripts/britain_thief_recon_controller.py`
+  - Segmented routing now remains active for all distances until `within_distance` is met.
+  - Removed brittle direct-only path attempt branch for close-range movement.
+  - Added `movement_not_required` strategy when already within waypoint proximity.
+- `_build_segment_candidates(...)`
+  - Removed early-return-to-destination behavior for `remaining_distance <= max_hop_distance`.
+  - Candidate generation now uses `step_limit=min(max_hop_distance, remaining_distance)` so close-range still gets fallback options (short-forward + lateral).
+
+## Testing Instructions
+1. Re-run from current close-range position near `(3006,1097)` corridor.
+2. Confirm `strategy=safe_pathfind_segmented` continues while distance remains above `within_distance`.
+3. Confirm candidate list remains multi-option near close range instead of collapsing to direct-only.
+4. Confirm transition to `Waypoint reached` once distance <= configured proximity.
+
+## Iteration Update (2026-03-08): Britain-First Standalone Pathing R&D Harness
+
+### Task Summary
+Implemented an isolated Britain-only pathfinding R&D stack without replacing existing production movement logic.
+
+New files:
+- `scripts/confictura_bot/pathing.py`
+- `scripts/britain_pathing_rd_config.py`
+- `scripts/britain_pathing_rd_controller.py`
+- `scripts/britain_pathing_rd_loader.py`
+
+What was built:
+- New shared API:
+  - `navigate_to_coordinate(ctx, state_name, destination, options)`
+  - Returns structured result: `success`, `stop_reason`, `final_distance`, `attempts`, `elapsed_ms`, `evidence`
+- Policy-level behavior in shared module (built on top of `safe_pathfind` primitive):
+  - Segmented adaptive hops
+  - Proximity completion via `within_distance`
+  - Candidate diversity: `primary`, `axis_x`, `axis_y`, `short_forward`, lateral sidesteps
+  - Progress measured by distance delta (not bool-only pathfind result)
+  - Bounded stall tolerance and hop-size backoff/recovery
+  - Deterministic stop budgets (`max_attempts`, `max_ms`) with explicit `stop_reason`
+- Dedicated Britain harness controller with staged route execution and summary aggregation.
+- Dedicated Britain test config with:
+  - Runtime tuning knobs
+  - Fixed route set (short/medium/long/chokepoint/negative)
+  - Optional random batch within Britain bounds
+- Dedicated macro loader to isolate test execution from existing FSMs.
+
+### Testing Instructions
+1. In ClassicAssist Macro tab, run `scripts/britain_pathing_rd_loader.py` (or copy its content into a macro).
+2. Stand in Britain start area (same-map walking context).
+3. Run harness and let it progress through all configured stages:
+   - Stage 1: local short sanity routes
+   - Stage 2: corridor/chokepoint routes
+   - Stage 3: medium/long routes
+   - Stage 4: random-batch routes within configured bounds
+   - Stage 5: negative/unreachable routes
+4. If route tuning is needed, edit only `scripts/britain_pathing_rd_config.py`:
+   - `pathing_defaults`
+   - `test_harness.fixed_routes`
+   - `test_harness.random_batch`
+5. Re-run via loader after each tuning iteration; import cache purge is built in.
+
+### Expected Telemetry Contract
+Per harness route:
+- `[FSM][RUN_ROUTE][INFO] Action preconditions | route_name=..., stage_name=..., destination=..., expected_reachable=...`
+
+Per shared pathing attempt:
+- `[FSM][RUN_ROUTE][DEBUG] Pathing attempt | attempt=..., hop_size=..., candidate_order=..., stall_count=...`
+- `[FSM][RUN_ROUTE][INFO] Pathing progress | selected_candidate=..., before=..., after=..., progress=...`
+- `[FSM][RUN_ROUTE][WARN] Pathing stall detected | stall_count=..., candidate_results=...`
+
+Per route result:
+- `[FSM][RUN_ROUTE][INFO|WARN] Route test passed|failed | pass_reason=..., stop_reason=..., attempts=..., elapsed_ms=...`
+
+Final summary:
+- `[FSM][FINAL_SUMMARY][INFO] Britain pathing RnD summary | route_total=..., route_pass=..., reachable_success_rate=..., baseline_ready=...`
+- `[FSM][FINAL_SUMMARY][INFO] Route summary row | idx=..., stage=..., route=..., passed=..., stop_reason=...`
+
+### Summary Report (Current)
+Execution status in this Codex environment: `NOT_RUN` (live shard/operator run required).
+
+| Stage | Route | Expected Outcome | Current Result |
+|---|---|---|---|
+| stage_1_local_sanity | sanity_short_north | PASS (reachable) | NOT_RUN |
+| stage_1_local_sanity | sanity_short_east | PASS (reachable) | NOT_RUN |
+| stage_1_local_sanity | sanity_return_origin | PASS (reachable) | NOT_RUN |
+| stage_2_corridor_chokepoint | corridor_public_door_lane | PASS (reachable) | NOT_RUN |
+| stage_2_corridor_chokepoint | corridor_market_cross | PASS (reachable) | NOT_RUN |
+| stage_2_corridor_chokepoint | corridor_guard_traffic | PASS (reachable) | NOT_RUN |
+| stage_3_medium_long_routes | medium_town_square | PASS (reachable) | NOT_RUN |
+| stage_3_medium_long_routes | long_west_gate_approach | PASS (reachable) | NOT_RUN |
+| stage_3_medium_long_routes | long_east_court_approach | PASS (reachable) | NOT_RUN |
+| stage_4_random_batch | random_batch_01..random_batch_08 | PASS target >= 90% reachable success | NOT_RUN |
+| stage_5_negative_unreachable | negative_invalid_high_z | PASS (expected bounded failure) | NOT_RUN |
+| stage_5_negative_unreachable | negative_probable_blocked_tile | PASS (expected bounded failure) | NOT_RUN |
+
+Exit criteria to confirm on live run:
+- Reachable-route success rate >= 90%
+- No infinite loops
+- All failures terminate with deterministic structured evidence (`stop_reason`, `candidate_order`, `candidate_results`, counters)
+
+### Recommended Default Tuning Values
+Initial recommended defaults (already set in `pathing_defaults`):
+- `within_distance=2`
+- `settle_ms=350`
+- `max_hop_distance=12`
+- `min_hop_distance=2`
+- `min_progress=1`
+- `stall_tolerance=4`
+- `stall_pause_ms=250`
+- `max_attempts=120`
+- `max_ms=120000`
+- `hop_backoff_step=2`
+- `hop_recover_step=1`
+- `lateral_step=1`
+
+### Known Fragilities
+- Some fixed coordinates are Britain baseline candidates and may require shard-live adjustment for blocked tiles or dynamic traffic patterns.
+- Negative route `negative_probable_blocked_tile` is intentionally heuristic; if it becomes reachable live, keep it but update expected behavior and/or coordinate.
+- Same-map-only policy is enforced by default (`enforce_same_map=True`); cross-map transitions are out of scope for this v1 module.
