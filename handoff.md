@@ -1507,3 +1507,44 @@ Initial recommended defaults (already set in `pathing_defaults`):
 - Some fixed coordinates are Britain baseline candidates and may require shard-live adjustment for blocked tiles or dynamic traffic patterns.
 - Negative route `negative_probable_blocked_tile` is intentionally heuristic; if it becomes reachable live, keep it but update expected behavior and/or coordinate.
 - Same-map-only policy is enforced by default (`enforce_same_map=True`); cross-map transitions are out of scope for this v1 module.
+
+## Iteration Addendum (2026-03-08): Live Run Feedback Integration - False Progress Loop Fix
+
+### Live Observations Received
+Operator run confirmed:
+- Stage 1 routes passed (`sanity_short_north`, `sanity_short_east`, `sanity_return_origin`).
+- Stage 2 routes passed (`corridor_public_door_lane`, `corridor_market_cross`, `corridor_guard_traffic`).
+- Harness later entered a long repeat pattern in Stage 3 (`medium_town_square`) without reaching fail-stop before manual operator stop.
+- Manual stop location: `(3002, 1126, 0)` under south Britain wall gate.
+
+### Root Cause
+`navigate_to_coordinate(...)` classified progress using per-candidate `before -> after` delta inside the same attempt. In obstacle oscillation cases this can report `progress=1` while attempt-level distance does not actually improve, preventing stall/fail-stop escalation.
+
+### Fix Applied
+Updated shared module:
+- `scripts/confictura_bot/pathing.py`
+
+Behavior change:
+- Progress gate now uses **attempt-start distance** (`attempt_start_distance - after_distance`) instead of per-candidate `before - after` only.
+- Candidate telemetry now includes both values:
+  - `candidate_progress`
+  - `attempt_progress`
+
+Expected effect:
+- Repeated oscillation at a fixed attempt distance no longer resets progress incorrectly.
+- Stall tolerance should now trigger deterministic fail-stop when true attempt-level progress is absent.
+
+### Re-Test Instructions
+1. Start from current operator location `(3002, 1126, 0)`.
+2. Run `scripts/britain_pathing_rd_loader.py`.
+3. Capture telemetry from:
+   - first `RUN_ROUTE` line for `medium_town_square`
+   - first `Pathing stall detected`
+   - terminal route result (`Pathing finished` + `Route test passed|failed`) for that route
+4. If the route now fails, expected stop reason should be deterministic (`stall_tolerance_exceeded` or budget stop).
+
+### Expected Telemetry Delta
+- `Pathing progress` lines now report:
+  - `progress=<attempt_progress>`
+  - `candidate_progress=<candidate_before_after_delta>`
+- In false-progress loops, `progress` should remain `0` and stall counter should rise toward deterministic stop.

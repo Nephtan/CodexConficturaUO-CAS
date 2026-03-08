@@ -474,10 +474,12 @@ def navigate_to_coordinate(ctx, state_name, destination, options):
         })
 
         progressed = False
+        attempt_start_distance = remaining_distance
         selected_label = ""
         selected_before = remaining_distance
         selected_after = remaining_distance
         selected_progress = 0
+        selected_candidate_progress = 0
         selected_point = None
 
         idx = 0
@@ -505,9 +507,10 @@ def navigate_to_coordinate(ctx, state_name, destination, options):
                 exception_text = str(ex)
 
             after_distance = _distance_between(_point_from_snapshot(_snapshot_self()), destination_point)
-            progress_delta = before_distance - after_distance
+            candidate_progress_delta = before_distance - after_distance
+            attempt_progress_delta = attempt_start_distance - after_distance
 
-            row_text = "{0}:{1},{2},{3}:ok={4}:before={5}:after={6}:progress={7}".format(
+            row_text = "{0}:{1},{2},{3}:ok={4}:before={5}:after={6}:candidate_progress={7}:attempt_progress={8}".format(
                 label,
                 candidate_point[0],
                 candidate_point[1],
@@ -515,7 +518,8 @@ def navigate_to_coordinate(ctx, state_name, destination, options):
                 pathfind_ok,
                 before_distance,
                 after_distance,
-                progress_delta
+                candidate_progress_delta,
+                attempt_progress_delta
             )
 
             if len(exception_text) > 0:
@@ -523,12 +527,13 @@ def navigate_to_coordinate(ctx, state_name, destination, options):
 
             candidate_rows.append(row_text)
 
-            if progress_delta >= opts["min_progress"]:
+            if attempt_progress_delta >= opts["min_progress"]:
                 progressed = True
                 selected_label = label
-                selected_before = before_distance
+                selected_before = attempt_start_distance
                 selected_after = after_distance
-                selected_progress = progress_delta
+                selected_progress = attempt_progress_delta
+                selected_candidate_progress = candidate_progress_delta
                 selected_point = candidate_point
                 break
 
@@ -566,6 +571,7 @@ def navigate_to_coordinate(ctx, state_name, destination, options):
                 "before": selected_before,
                 "after": selected_after,
                 "progress": selected_progress,
+                "candidate_progress": selected_candidate_progress,
                 "next_hop_size": hop_size
             })
             continue
@@ -645,3 +651,4 @@ def navigate_to_coordinate(ctx, state_name, destination, options):
     })
 
     return result
+
