@@ -1322,3 +1322,38 @@ Changes:
 ## Known Fragilities
 - If local terrain blocks all three hop candidates, run fails fast with `Segment pathfind failed` and candidate evidence payload.
 - If shard/client changes per-call movement limits, retune only `runtime.pathfind_max_hop_distance` in config.
+
+## Iteration Addendum (2026-03-08): Stall-Tolerant Segmented Movement
+
+## Task Summary
+Live log showed segmented routing was partially working but failed too aggressively on transient stalls:
+- Movement advanced from spawn to around `3000,1048`.
+- Controller failed on single `progress=0` segment checks, consuming retries and stopping.
+
+Fixes applied:
+- `scripts/britain_thief_recon_controller.py`
+  - Segment mode now evaluates candidate outcomes per attempt (`before/after/progress`) and records structured evidence.
+  - Single no-progress segment is now warning-path, not immediate fatal-recover.
+  - Added bounded stall counter on context (`segment_no_progress_count`) with tolerance gate.
+  - Fail-stop now occurs only when no-progress count exceeds configured tolerance.
+  - Stall counter resets on successful segment progress and on direct waypoint-path success.
+- `scripts/britain_thief_recon_config.py`
+  - Added runtime tuning:
+    - `segment_no_progress_tolerance: 4`
+    - `segment_stall_pause_ms: 250`
+
+## Testing Instructions
+1. Keep character at current position (`3000,1048`) and run recon loader.
+2. Confirm logs may include intermittent:
+   - `Segment path no progress` warnings with `stall_count` increasing.
+3. Confirm run continues through warnings and resumes progress before tolerance exceeded.
+4. Confirm eventual arrival at first waypoint and door interaction attempt.
+
+## Expected Telemetry
+- `[FSM][TRAVEL_TO_WAYPOINT][WARN] Segment path no progress | stall_count=..., stall_tolerance=4, candidate_results=...`
+- subsequent successful recovery:
+  - `[FSM][TRAVEL_TO_WAYPOINT][INFO] Segment path progress | before=..., after=..., progress=...`
+
+## Known Fragilities
+- If terrain repeatedly blocks all candidate hops, controller will still fail-stop when `stall_count > segment_no_progress_tolerance` by design.
+- If movement remains too slow, increase `segment_stall_pause_ms` before relaxing tolerance.

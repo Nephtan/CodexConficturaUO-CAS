@@ -930,6 +930,7 @@ class BootstrapState(State):
         ctx.last_scan_evidence = {}
         ctx.final_summary = {}
         ctx.stop_cause = ""
+        ctx.segment_no_progress_count = 0
 
         Telemetry.info(self.key, "Bootstrap ready", {
             "waypoint_count": len(waypoints),
@@ -1036,63 +1037,97 @@ class TravelToWaypointState(State):
                 "candidate_order": "|".join(candidate_order)
             })
 
-            segment_success = False
+            segment_progress = False
             segment_target = None
+            segment_before = initial_distance_to_waypoint
+            segment_after = initial_distance_to_waypoint
+            candidate_results = []
 
             idx = 0
             while idx < len(segment_candidates):
                 candidate = segment_candidates[idx]
                 idx += 1
 
-                if safe_pathfind(
+                before_candidate = _distance_to_point(destination)
+
+                attempt_ok = safe_pathfind(
                     ctx,
                     self.key,
                     candidate,
                     runtime_cfg.get("pathfind_settle_ms", 350),
                     fail_on_error=False
-                ):
-                    segment_success = True
+                )
+
+                after_candidate = _distance_to_point(destination)
+                progress_candidate = before_candidate - after_candidate
+
+                candidate_results.append(
+                    "{0},{1},{2}:ok={3}:before={4}:after={5}:progress={6}".format(
+                        candidate[0],
+                        candidate[1],
+                        candidate[2],
+                        attempt_ok,
+                        before_candidate,
+                        after_candidate,
+                        progress_candidate
+                    )
+                )
+
+                if attempt_ok and progress_candidate >= min_progress:
+                    segment_progress = True
                     segment_target = candidate
+                    segment_before = before_candidate
+                    segment_after = after_candidate
                     break
 
-            if not segment_success:
-                ctx.fail(self.key, "Segment pathfind failed", {
+            if segment_progress:
+                ctx.segment_no_progress_count = 0
+                Telemetry.info(self.key, "Segment path progress", {
+                    "waypoint_name": waypoint["name"],
+                    "segment_target": segment_target,
+                    "before": segment_before,
+                    "after": segment_after,
+                    "progress": segment_before - segment_after
+                })
+                return "TRAVEL_TO_WAYPOINT"
+
+            tolerance = _to_int(runtime_cfg.get("segment_no_progress_tolerance", 4), 4)
+            if tolerance < 0:
+                tolerance = 0
+
+            ctx.segment_no_progress_count = _to_int(getattr(ctx, "segment_no_progress_count", 0), 0) + 1
+
+            Telemetry.warn(self.key, "Segment path no progress", {
+                "waypoint_name": waypoint["name"],
+                "destination": destination,
+                "remaining_distance": initial_distance_to_waypoint,
+                "candidate_order": "|".join(candidate_order),
+                "candidate_results": "|".join(candidate_results),
+                "stall_count": ctx.segment_no_progress_count,
+                "stall_tolerance": tolerance,
+                "min_progress": min_progress
+            })
+
+            if ctx.segment_no_progress_count > tolerance:
+                ctx.fail(self.key, "Segment path no-progress tolerance exceeded", {
                     "waypoint_name": waypoint["name"],
                     "destination": destination,
                     "remaining_distance": initial_distance_to_waypoint,
-                    "max_hop_distance": max_hop_distance,
-                    "candidate_order": "|".join(candidate_order)
-                })
-                return "RECOVER"
-
-            remaining_after_segment = _distance_to_point(destination)
-            progress_made = initial_distance_to_waypoint - remaining_after_segment
-
-            if progress_made < min_progress:
-                ctx.fail(self.key, "Segment path made insufficient progress", {
-                    "waypoint_name": waypoint["name"],
-                    "destination": destination,
-                    "segment_target": segment_target,
-                    "before": initial_distance_to_waypoint,
-                    "after": remaining_after_segment,
-                    "progress": progress_made,
+                    "candidate_order": "|".join(candidate_order),
+                    "candidate_results": "|".join(candidate_results),
+                    "stall_count": ctx.segment_no_progress_count,
+                    "stall_tolerance": tolerance,
                     "min_progress": min_progress
                 })
                 return "RECOVER"
 
-            Telemetry.info(self.key, "Segment path progress", {
-                "waypoint_name": waypoint["name"],
-                "segment_target": segment_target,
-                "before": initial_distance_to_waypoint,
-                "after": remaining_after_segment,
-                "progress": progress_made
-            })
-
+            Pause(_to_int(runtime_cfg.get("segment_stall_pause_ms", 250), 250))
             return "TRAVEL_TO_WAYPOINT"
 
         if not safe_pathfind(ctx, self.key, destination, runtime_cfg.get("pathfind_settle_ms", 350)):
             return "RECOVER"
 
+        ctx.segment_no_progress_count = 0
         distance_to_waypoint = _distance_to_point(destination)
         ctx.current_waypoint = waypoint
         if distance_to_waypoint > waypoint["within_distance"]:
@@ -1438,6 +1473,10 @@ def run_britain_thief_recon_controller(config):
 
 
 run_britain_thief_recon_controller(BOT_CONFIG)
+
+
+
+
 
 
 

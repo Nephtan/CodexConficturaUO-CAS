@@ -11,6 +11,8 @@ BOT_CONFIG = {
         "pathfind_settle_ms": 350,
         "pathfind_max_hop_distance": 12,
         "pathfind_min_progress": 1,
+        "segment_no_progress_tolerance": 4,
+        "segment_stall_pause_ms": 250,
         "scan_pause_ms": 120,
         "properties_timeout_ms": 250
     },
@@ -238,5 +240,6 @@ BOT_CONFIG = {
         "stop_on_murderer_state": True
     }
 }
+
 
 
