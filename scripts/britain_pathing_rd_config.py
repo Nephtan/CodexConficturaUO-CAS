@@ -326,7 +326,15 @@ BOT_CONFIG = {
         "lateral_step": 1,
         "short_step_divisor": 2,
         "enforce_same_map": True,
-        "max_evidence_attempts": 80
+        "max_evidence_attempts": 80,
+        "client_pathfind_max_distance": 18,
+        "pathfinding_wait_ms": 900,
+        "pathfinding_poll_ms": 100,
+        "cancel_active_pathfind": True,
+        "candidate_repeat_window": 12,
+        "candidate_repeat_limit": 2,
+        "near_target_distance": 6,
+        "near_target_stall_tolerance": 2
     },
     "test_harness": {
         "success_rate_target_percent": 90,
@@ -336,7 +344,8 @@ BOT_CONFIG = {
             "stall_tolerance_exceeded",
             "max_attempts_exceeded",
             "max_ms_exceeded",
-            "map_changed"
+            "map_changed",
+            "near_target_oscillation"
         ],
         "stages": [
             {

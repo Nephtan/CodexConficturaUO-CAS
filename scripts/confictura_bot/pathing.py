@@ -140,7 +140,15 @@ def _normalize_options(options):
         "lateral_step": _to_int(options.get("lateral_step", 1), 1),
         "short_step_divisor": _to_int(options.get("short_step_divisor", 2), 2),
         "enforce_same_map": _to_bool(options.get("enforce_same_map", True), True),
-        "max_evidence_attempts": _to_int(options.get("max_evidence_attempts", 50), 50)
+        "max_evidence_attempts": _to_int(options.get("max_evidence_attempts", 50), 50),
+        "client_pathfind_max_distance": _to_int(options.get("client_pathfind_max_distance", 18), 18),
+        "pathfinding_wait_ms": _to_int(options.get("pathfinding_wait_ms", 900), 900),
+        "pathfinding_poll_ms": _to_int(options.get("pathfinding_poll_ms", 100), 100),
+        "cancel_active_pathfind": _to_bool(options.get("cancel_active_pathfind", True), True),
+        "candidate_repeat_window": _to_int(options.get("candidate_repeat_window", 12), 12),
+        "candidate_repeat_limit": _to_int(options.get("candidate_repeat_limit", 2), 2),
+        "near_target_distance": _to_int(options.get("near_target_distance", 6), 6),
+        "near_target_stall_tolerance": _to_int(options.get("near_target_stall_tolerance", 2), 2)
     }
 
     if normalized["within_distance"] < 0:
@@ -175,6 +183,25 @@ def _normalize_options(options):
         normalized["short_step_divisor"] = 2
     if normalized["max_evidence_attempts"] < 1:
         normalized["max_evidence_attempts"] = 1
+    if normalized["client_pathfind_max_distance"] < 1:
+        normalized["client_pathfind_max_distance"] = 1
+    if normalized["pathfinding_wait_ms"] < 0:
+        normalized["pathfinding_wait_ms"] = 0
+    if normalized["pathfinding_poll_ms"] < 50:
+        normalized["pathfinding_poll_ms"] = 50
+    if normalized["candidate_repeat_window"] < 1:
+        normalized["candidate_repeat_window"] = 1
+    if normalized["candidate_repeat_limit"] < 1:
+        normalized["candidate_repeat_limit"] = 1
+    if normalized["near_target_distance"] < 0:
+        normalized["near_target_distance"] = 0
+    if normalized["near_target_stall_tolerance"] < 1:
+        normalized["near_target_stall_tolerance"] = 1
+
+    if normalized["max_hop_distance"] > normalized["client_pathfind_max_distance"]:
+        normalized["max_hop_distance"] = normalized["client_pathfind_max_distance"]
+    if normalized["min_hop_distance"] > normalized["max_hop_distance"]:
+        normalized["min_hop_distance"] = normalized["max_hop_distance"]
 
     if normalized["settle_ms"] < normalized["min_action_delay_ms"]:
         normalized["settle_ms"] = normalized["min_action_delay_ms"]
@@ -182,7 +209,6 @@ def _normalize_options(options):
         normalized["stall_pause_ms"] = normalized["min_action_delay_ms"]
 
     return normalized
-
 
 def _clamp_axis_delta(delta_value, max_step):
     if delta_value > max_step:
@@ -331,6 +357,116 @@ def _build_candidates(current, destination, hop_size, lateral_step, short_step_d
     return rows
 
 
+def _prepare_candidates_for_attempt(candidates, destination, remaining_distance, client_max_distance, stall_count):
+    filtered = []
+
+    idx = 0
+    while idx < len(candidates):
+        row = candidates[idx]
+        idx += 1
+
+        if row["label"] == "destination" and remaining_distance > client_max_distance:
+            continue
+
+        filtered.append(row)
+
+    if len(filtered) <= 0:
+        filtered.append({"label": "destination", "point": destination})
+
+    if remaining_distance <= client_max_distance:
+        destination_row = None
+        others = []
+
+        idx = 0
+        while idx < len(filtered):
+            row = filtered[idx]
+            idx += 1
+
+            if row["label"] == "destination":
+                destination_row = row
+                continue
+
+            others.append(row)
+
+        if destination_row is not None:
+            filtered = [destination_row] + others
+        else:
+            filtered = others
+    elif stall_count > 0 and len(filtered) > 1:
+        rotate_by = stall_count % len(filtered)
+        if rotate_by > 0:
+            filtered = filtered[rotate_by:] + filtered[:rotate_by]
+
+    return filtered
+
+
+def _recent_point_count(history_points, point):
+    count = 0
+
+    idx = 0
+    while idx < len(history_points):
+        if history_points[idx] == point:
+            count += 1
+        idx += 1
+
+    return count
+
+
+def _append_recent_point(history_points, point, max_window):
+    history_points.append(point)
+
+    while len(history_points) > max_window:
+        history_points.pop(0)
+
+
+def _cancel_active_pathfind(ctx, state_name, pause_ms):
+    is_active = _safe_call(False, Pathfinding)
+    if not is_active:
+        return False
+
+    try:
+        Pathfind(-1)
+    except Exception as ex:
+        Telemetry.warn(state_name, "Pathfind cancel failed (non-fatal)", {
+            "exception": str(ex)
+        })
+        return False
+
+    if pause_ms > 0:
+        if not _safe_pause(ctx, state_name, pause_ms):
+            return False
+
+    Telemetry.debug(state_name, "Cancelled active pathfind before new request")
+    return True
+
+
+def _wait_for_pathfinding_idle(ctx, state_name, timeout_ms, poll_ms):
+    timeout = _to_int(timeout_ms, 0)
+    if timeout <= 0:
+        return True
+
+    poll = _to_int(poll_ms, 100)
+    if poll < 50:
+        poll = 50
+
+    elapsed = 0
+    observed_pathing = False
+
+    while elapsed < timeout:
+        is_pathing = _safe_call(False, Pathfinding)
+        if is_pathing:
+            observed_pathing = True
+
+        if not is_pathing and (observed_pathing or elapsed >= poll):
+            return True
+
+        if not _safe_pause(ctx, state_name, poll):
+            return False
+
+        elapsed += poll
+
+    return True
+
 def _safe_pause(ctx, state_name, milliseconds):
     pause_ms = _to_int(milliseconds, 0)
     if pause_ms <= 0:
@@ -408,7 +544,15 @@ def navigate_to_coordinate(ctx, state_name, destination, options):
         "enforce_same_map": opts["enforce_same_map"],
         "min_action_delay_ms": opts["min_action_delay_ms"],
         "settle_ms": opts["settle_ms"],
-        "stall_pause_ms": opts["stall_pause_ms"]
+        "stall_pause_ms": opts["stall_pause_ms"],
+        "client_pathfind_max_distance": opts["client_pathfind_max_distance"],
+        "pathfinding_wait_ms": opts["pathfinding_wait_ms"],
+        "pathfinding_poll_ms": opts["pathfinding_poll_ms"],
+        "cancel_active_pathfind": opts["cancel_active_pathfind"],
+        "candidate_repeat_window": opts["candidate_repeat_window"],
+        "candidate_repeat_limit": opts["candidate_repeat_limit"],
+        "near_target_distance": opts["near_target_distance"],
+        "near_target_stall_tolerance": opts["near_target_stall_tolerance"]
     })
 
     if initial_distance <= opts["within_distance"]:
@@ -427,6 +571,8 @@ def navigate_to_coordinate(ctx, state_name, destination, options):
     stall_count = 0
     attempts = 0
     stop_reason = ""
+
+    recent_selected_points = []
 
     while attempts < opts["max_attempts"]:
         elapsed_ms = _now_ms() - start_ms
@@ -462,6 +608,14 @@ def navigate_to_coordinate(ctx, state_name, destination, options):
             opts["short_step_divisor"]
         )
 
+        candidates = _prepare_candidates_for_attempt(
+            candidates,
+            destination_point,
+            remaining_distance,
+            opts["client_pathfind_max_distance"],
+            stall_count
+        )
+
         candidate_order = []
         candidate_rows = []
 
@@ -481,10 +635,14 @@ def navigate_to_coordinate(ctx, state_name, destination, options):
             "hop_size": hop_size,
             "candidate_count": len(candidates),
             "candidate_order": "|".join(candidate_order),
-            "stall_count": stall_count
+            "stall_count": stall_count,
+            "client_pathfind_max_distance": opts["client_pathfind_max_distance"],
+            "candidate_repeat_limit": opts["candidate_repeat_limit"],
+            "candidate_repeat_window": opts["candidate_repeat_window"]
         })
 
         progressed = False
+        pause_unavailable = False
         attempt_start_distance = remaining_distance
         selected_label = ""
         selected_before = remaining_distance
@@ -492,18 +650,57 @@ def navigate_to_coordinate(ctx, state_name, destination, options):
         selected_progress = 0
         selected_candidate_progress = 0
         selected_point = None
+        selected_repeat_count = 0
+        selected_forced = False
 
+        selected_row = None
         idx = 0
         while idx < len(candidates):
             row = candidates[idx]
             idx += 1
 
-            label = row["label"]
-            candidate_point = row["point"]
+            repeat_count = _recent_point_count(recent_selected_points, row["point"])
+            if repeat_count >= opts["candidate_repeat_limit"]:
+                point = row["point"]
+                candidate_rows.append("{0}:{1},{2},{3}:skipped=recent_repeat:repeat_count={4}".format(
+                    row["label"],
+                    point[0],
+                    point[1],
+                    point[2],
+                    repeat_count
+                ))
+                continue
+
+            selected_row = row
+            selected_repeat_count = repeat_count
+            break
+
+        if selected_row is None and len(candidates) > 0:
+            selected_row = candidates[0]
+            selected_repeat_count = _recent_point_count(recent_selected_points, selected_row["point"])
+            selected_forced = True
+
+            point = selected_row["point"]
+            candidate_rows.append("{0}:{1},{2},{3}:selection=forced_repeat_override:repeat_count={4}".format(
+                selected_row["label"],
+                point[0],
+                point[1],
+                point[2],
+                selected_repeat_count
+            ))
+
+        if selected_row is not None:
+            selected_label = selected_row["label"]
+            candidate_point = selected_row["point"]
+            selected_point = candidate_point
 
             before_distance = _distance_between(_point_from_snapshot(_snapshot_self()), destination_point)
             pathfind_ok = False
             exception_text = ""
+            cancelled_active_pathfind = False
+
+            if opts["cancel_active_pathfind"]:
+                cancelled_active_pathfind = _cancel_active_pathfind(ctx, state_name, opts["pathfinding_poll_ms"])
 
             try:
                 pathfind_ok = safe_pathfind(
@@ -517,12 +714,15 @@ def navigate_to_coordinate(ctx, state_name, destination, options):
                 pathfind_ok = False
                 exception_text = str(ex)
 
+            if not _wait_for_pathfinding_idle(ctx, state_name, opts["pathfinding_wait_ms"], opts["pathfinding_poll_ms"]):
+                pause_unavailable = True
+
             after_distance = _distance_between(_point_from_snapshot(_snapshot_self()), destination_point)
             candidate_progress_delta = before_distance - after_distance
             attempt_progress_delta = attempt_start_distance - after_distance
 
-            row_text = "{0}:{1},{2},{3}:ok={4}:before={5}:after={6}:candidate_progress={7}:attempt_progress={8}".format(
-                label,
+            row_text = "{0}:{1},{2},{3}:ok={4}:before={5}:after={6}:candidate_progress={7}:attempt_progress={8}:repeat_count={9}".format(
+                selected_label,
                 candidate_point[0],
                 candidate_point[1],
                 candidate_point[2],
@@ -530,23 +730,31 @@ def navigate_to_coordinate(ctx, state_name, destination, options):
                 before_distance,
                 after_distance,
                 candidate_progress_delta,
-                attempt_progress_delta
+                attempt_progress_delta,
+                selected_repeat_count
             )
 
+            if selected_forced:
+                row_text = "{0}:forced=True".format(row_text)
+            if cancelled_active_pathfind:
+                row_text = "{0}:cancelled_active_pathfind=True".format(row_text)
             if len(exception_text) > 0:
                 row_text = "{0}:exception={1}".format(row_text, exception_text)
 
             candidate_rows.append(row_text)
+            _append_recent_point(recent_selected_points, candidate_point, opts["candidate_repeat_window"])
 
-            if attempt_progress_delta >= opts["min_progress"]:
+            if not pause_unavailable and attempt_progress_delta >= opts["min_progress"]:
                 progressed = True
-                selected_label = label
                 selected_before = attempt_start_distance
                 selected_after = after_distance
                 selected_progress = attempt_progress_delta
                 selected_candidate_progress = candidate_progress_delta
-                selected_point = candidate_point
-                break
+        else:
+            candidate_rows.append("none:selected=False:reason=no_candidate_available")
+
+        if pause_unavailable:
+            stop_reason = "pause_unavailable"
 
         evidence["candidate_order_last"] = "|".join(candidate_order)
         evidence["candidate_results_last"] = "|".join(candidate_rows)
@@ -564,6 +772,9 @@ def navigate_to_coordinate(ctx, state_name, destination, options):
             evidence["attempt_records"].append(attempt_record)
         else:
             evidence["dropped_attempt_records"] += 1
+
+        if len(stop_reason) > 0:
+            break
 
         if progressed:
             stall_count = 0
@@ -583,7 +794,9 @@ def navigate_to_coordinate(ctx, state_name, destination, options):
                 "after": selected_after,
                 "progress": selected_progress,
                 "candidate_progress": selected_candidate_progress,
-                "next_hop_size": hop_size
+                "next_hop_size": hop_size,
+                "repeat_count": selected_repeat_count,
+                "forced_selection": selected_forced
             })
             continue
 
@@ -593,15 +806,30 @@ def navigate_to_coordinate(ctx, state_name, destination, options):
             if hop_size < opts["min_hop_distance"]:
                 hop_size = opts["min_hop_distance"]
 
+        stall_distance = _distance_between(_point_from_snapshot(_snapshot_self()), destination_point)
+
         Telemetry.warn(state_name, "Pathing stall detected", {
             "attempt": attempts,
             "stall_count": stall_count,
             "stall_tolerance": opts["stall_tolerance"],
             "next_hop_size": hop_size,
-            "remaining_distance": remaining_distance,
+            "remaining_distance": stall_distance,
             "candidate_order": evidence["candidate_order_last"],
             "candidate_results": evidence["candidate_results_last"]
         })
+
+        if stall_distance <= opts["near_target_distance"] and stall_count >= opts["near_target_stall_tolerance"]:
+            stop_reason = "near_target_oscillation"
+            _ctx_fail(ctx, state_name, "Pathing near-target oscillation detected", {
+                "attempt": attempts,
+                "stall_count": stall_count,
+                "near_target_distance": opts["near_target_distance"],
+                "near_target_stall_tolerance": opts["near_target_stall_tolerance"],
+                "remaining_distance": stall_distance,
+                "candidate_order": evidence["candidate_order_last"],
+                "candidate_results": evidence["candidate_results_last"]
+            })
+            break
 
         if stall_count > opts["stall_tolerance"]:
             stop_reason = "stall_tolerance_exceeded"
@@ -609,7 +837,7 @@ def navigate_to_coordinate(ctx, state_name, destination, options):
                 "attempt": attempts,
                 "stall_count": stall_count,
                 "stall_tolerance": opts["stall_tolerance"],
-                "remaining_distance": remaining_distance,
+                "remaining_distance": stall_distance,
                 "candidate_order": evidence["candidate_order_last"],
                 "candidate_results": evidence["candidate_results_last"]
             })
@@ -618,7 +846,6 @@ def navigate_to_coordinate(ctx, state_name, destination, options):
         if not _safe_pause(ctx, state_name, opts["stall_pause_ms"]):
             stop_reason = "pause_unavailable"
             break
-
     if len(stop_reason) <= 0:
         if result["success"]:
             stop_reason = "within_distance_reached"
@@ -662,5 +889,4 @@ def navigate_to_coordinate(ctx, state_name, destination, options):
     })
 
     return result
-
 

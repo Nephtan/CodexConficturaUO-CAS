@@ -1651,3 +1651,64 @@ Default policy note:
 - Some generated POIs may be technically reachable only via specific approach vectors; expect occasional bounded failures in dense NPC traffic.
 - Full generated coverage is intentionally large; use limits for faster tuning loops before full-batch validation.
 
+## Iteration Addendum (2026-03-08): Client Pathfind Synergy + Oscillation Guardrails
+
+### Task Summary
+Integrated a client-pathfinding-first execution model to stop request thrash and building-loop oscillations seen in the latest live logs.
+
+Updated files:
+- `scripts/confictura_bot/pathing.py`
+- `scripts/britain_pathing_rd_config.py`
+
+What changed:
+- Pathing now issues **one movement request per attempt** instead of rapid multi-candidate request bursts.
+- Added ClassicUO pathfinding synchronization:
+  - optional `Pathfind(-1)` cancel of active auto-walk before a new request
+  - bounded wait for `Pathfinding()` to settle (`pathfinding_wait_ms`, `pathfinding_poll_ms`)
+- Added shard-safe client range policy:
+  - `client_pathfind_max_distance` (default `18`)
+  - destination candidate is suppressed when out of client range (prevents repeated `Maximum distance exceeded` probes)
+  - destination candidate is prioritized when within range
+- Added anti-oscillation memory:
+  - `candidate_repeat_window`
+  - `candidate_repeat_limit`
+  - skips recently repeated candidate points unless forced fallback is required
+- Added deterministic near-target fail-stop:
+  - `near_target_distance`
+  - `near_target_stall_tolerance`
+  - terminal reason: `near_target_oscillation`
+- Added config defaults for the above in `pathing_defaults` and accepted `near_target_oscillation` for negative-route expected failure reasons.
+
+### Testing Instructions
+1. Run `scripts/britain_pathing_rd_loader.py` from Britain city area (same-map).
+2. Verify preconditions now print:
+   - `client_pathfind_max_distance=18`
+   - `pathfinding_wait_ms=900`
+   - `pathfinding_poll_ms=100`
+   - `candidate_repeat_window=12`
+   - `candidate_repeat_limit=2`
+   - `near_target_distance=6`
+   - `near_target_stall_tolerance=2`
+3. Re-run the known problem routes from the latest log snippet (especially `npc_spawner_019_gypsylady` and `npc_spawner_024_adventurereast`).
+4. Confirm per-attempt behavior:
+   - exactly one `Pathfind request` should be associated with each `Pathing attempt` cycle
+   - no repeated out-of-range destination probes while remaining distance is > 18
+5. If looping persists near destination (distance ~3-6), confirm deterministic stop reason is `near_target_oscillation` instead of long timeout churn.
+
+### Expected Telemetry Delta
+- `Pathing attempt` now includes client-synergy knobs (`client_pathfind_max_distance`, repeat settings).
+- `candidate_results` may include:
+  - `skipped=recent_repeat`
+  - `selection=forced_repeat_override`
+  - `cancelled_active_pathfind=True`
+- `Pathing progress` now includes:
+  - `repeat_count`
+  - `forced_selection`
+- Failure mode near close-range ping-pong should emit:
+  - `Pathing near-target oscillation detected`
+  - `stop_reason=near_target_oscillation`
+
+### Known Fragilities
+- If `Pathfinding()` reports inconsistently in a specific ClassicUO build, the wait loop falls back to bounded polling and may still require higher `pathfinding_wait_ms`.
+- On very high latency, cancel-before-request can occasionally interrupt useful momentum; set `cancel_active_pathfind=False` if that pattern appears.
+- Repeat filtering is intentionally conservative; in extremely tight geometry, increasing `candidate_repeat_limit` to `3` may improve recovery.
