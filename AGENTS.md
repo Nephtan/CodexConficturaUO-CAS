@@ -122,5 +122,21 @@ Confictura is highly customized. Treat shard-specific behavior as the default, n
 * **Critical steps must fail-stop by default.** Do not silently skip them.
 * **Skip behavior must be explicit policy, disabled by default, and named in config.**
 * **If a step is policy-skipped, telemetry must include:** step name, skip flag, and exact reason.
+
+## **15\. Beta-Proven Runtime Directives**
+
+The following policies are now mandatory for Confictura onboarding/runtime work:
+
+* **Dual-Channel Gump Verification:** Treat gump arrival as a combination of packet wait + open-gump state (`GumpExists`) checks. Do not rely on packet waits alone.
+* **Stateful Gump Tolerance:** For known multi-page/state gumps (example: gypsy tarot), avoid brittle text-only hard-fails once the expected gump id is already confirmed open.
+* **Policy-Gated Steps:** Runtime step execution must support explicit config gating (`enabled_flag`, `skip_if_mode`) instead of ad-hoc conditional code.
+* **Boolean Normalization Requirement:** Config flags must be normalized robustly across bool/int/string forms (`true/false`, `1/0`, `on/off`, `yes/no`) before policy decisions.
+* **Skip Telemetry Contract:** When skipping a step by policy, telemetry must include at minimum: `enabled_flag`, evaluated flag value, `skip_if_mode`, and active mode.
+* **Intent-Based Movement:** Use controller-level proximity semantics (`within_distance`, `avoid_exact_tile`) rather than only raw tile pathfind calls.
+* **API Overload Variance Handling:** Wrapper functions must prefer host-safe signatures first and provide fallbacks for ClassicAssist/IronPython overload differences.
+* **Retry Discipline:** Default to fail-fast (`max_retries_per_state=1`) unless a specific shard interaction has proven transient behavior requiring more retries.
+* **Completion Verification Redundancy:** Critical completion states should use both journal evidence and world-state fallback checks (example: distance-from-start-zone) when applicable.
 \</INSTRUCTIONS\>
+
+
 

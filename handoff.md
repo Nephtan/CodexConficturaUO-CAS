@@ -1146,3 +1146,179 @@ Changes:
 Expected effect:
 - Race shelf enable flag behavior is deterministic and diagnosable from logs.
 - Final gypsy transition is tolerant when the tarot gump is already open but not on the exact prior text page.
+
+---
+
+# Beta Retrospective (2026-03-07): Starting Area Clear Achieved
+
+## Lessons Learned
+1. ClassicAssist Recorder output is the strongest operational truth for interaction sequencing and button IDs.
+2. Confictura-specific behavior must be assumed by default; vanilla assumptions cause avoidable failures.
+3. Gump handling must combine packet waits with open-gump state checks (`GumpExists`) to handle client/state desyncs.
+4. Stateful gumps (like Gypsy tarot) should not rely on strict text signatures once flow is already established.
+5. Context interactions require shard-safe fallbacks (named entry + numeric entry + telemetry evidence).
+6. Step policy must be explicit and data-driven (`enabled_flag`, `skip_if_mode`) with clear skip telemetry.
+7. Config booleans must be normalized robustly (bool/int/string) before policy decisions.
+8. Pathing intent matters: “within distance” and “avoid exact tile” need explicit controller logic, not just raw `Pathfind` calls.
+9. Host/API signature variance is real (e.g., `Pathfind`/`FindType` overload behavior); wrappers and fallback paths are required.
+10. One-retry fail-fast policy is effective on this shard due low lag and deterministic failure modes.
+11. Completion checks should include world-state fallbacks (distance from start zone) in addition to journal-only checks.
+12. High-verbosity structured telemetry is the primary debugger for blind development and should be treated as part of runtime design.
+
+## Beta Status
+- Gypsy/Thuvia/race/tarot onboarding now clears the starting area and reaches terminal completion under tested paths.
+- This is the current baseline for post-start-world autonomous module work.
+
+---
+
+# Iteration Update (2026-03-07): Britain Spawn-to-Thief Recon FSM (No Theft)
+
+## Task Summary
+Implemented a new recon-only post-onboarding FSM for Britain-to-Thieves-Guild mapping that never issues theft/combat actions.
+
+New files:
+- `scripts/britain_thief_recon_controller.py`
+- `scripts/britain_thief_recon_config.py`
+
+What was added:
+- Deterministic FSM states for recon flow:
+  - `BOOTSTRAP -> CAPTURE_SPAWN -> TRAVEL_TO_WAYPOINT -> RECON_SCAN -> ADVANCE_WAYPOINT -> FINAL_SUMMARY -> COMPLETE_STOP`
+  - plus `RECOVER` and `FATAL_STOP`
+- ClassicAssist runtime hygiene:
+  - import-cache purge for `britain_thief_recon_config` and `confictura_bot*`
+  - API publication telemetry via `publish_known_ca_api(...)`
+- Multi-pass mobile acquisition policy (bounded scans):
+  - `GetEnemy(..., "Next", ...)` pass
+  - `GetFriend(..., "Next", ...)` pass
+  - bounded attempts and structured failure evidence (`observed_names`, `search_range`, `scan_order`, `scan_counts`)
+- Object watch recon for thief hub artifacts and fixtures:
+  - stealing board, pickpocket dip, training dummy, practice lockboxes, guild bank vault, and secret doors
+- Fail-fast risk policy:
+  - `risk.fail_fast_on_guard_or_criminal = True`
+  - immediate fatal stop on self criminal/murderer state or nearby guard-name token hit
+- Final structured summary payload:
+  - discovered mobile/object serial+name+position tuples per watch target
+  - unresolved expected watch targets
+
+No `UseSkill("Stealing")`, `Attack(...)`, or theft logic is used in this controller.
+
+## Testing Instructions
+1. Finish onboarding so the character is in Britain, then run:
+   - `scripts/britain_thief_recon_controller.py`
+2. Confirm bootstrap checks and spawn capture:
+   - `BOOTSTRAP` validates required config sections
+   - `CAPTURE_SPAWN` prints current map/position snapshot
+3. Confirm route traversal through configured thief-hub waypoints around:
+   - `3409-3421, 3187-3203` (Sosaria context)
+4. Confirm `RECON_SCAN` behavior at each waypoint:
+   - multi-pass mobile scan executes
+   - object watches attempt discovery
+   - unmatched targets emit structured warning evidence (not silent)
+5. Confirm final stop behavior:
+   - `FINAL_SUMMARY` prints discovered tuples + unresolved target lists
+   - `COMPLETE_STOP` reports deterministic stop cause (`recon_complete`)
+6. Policy checks:
+   - Ensure no stealing/combat command is triggered by this script
+   - If character becomes criminal or guard token is detected nearby, verify immediate fail-stop path
+
+## Expected Telemetry
+- `[FSM][BOOTSTRAP][INFO] Bootstrap ready | waypoint_count=..., mobile_watch_count=..., object_watch_count=...`
+- `[FSM][CAPTURE_SPAWN][INFO] Captured spawn snapshot | map=..., x=..., y=..., z=...`
+- `[FSM][TRAVEL_TO_WAYPOINT][INFO] Action preconditions | strategy=safe_pathfind, destination=(...), within_distance=...`
+- `[FSM][RECON_SCAN][INFO] Action preconditions | selector_strategy=multi_pass_enemy_friend_next, ...`
+- `[FSM][RECON_SCAN][INFO] Mobile watch matched | watch_name=..., matched_count=...`
+- `[FSM][RECON_SCAN][WARN] Mobile watch unmatched | observed_names=..., scan_order=..., scan_counts=...`
+- `[FSM][RECON_SCAN][INFO] Object watch matched | watch_name=..., matched_count=...`
+- `[FSM][RECON_SCAN][WARN] Object watch unmatched | expected=graphic=...,hue=..., observed=..., counts=...`
+- `[FSM][FINAL_SUMMARY][INFO] Recon summary ready | discovered_mobiles=..., discovered_objects=..., unresolved_mobile_watch=..., unresolved_object_watch=...`
+- `[FSM][COMPLETE_STOP][INFO] Britain thief recon complete | stop_cause=recon_complete, ...`
+
+## Known Fragilities
+- `GetEnemy/GetFriend` overload behavior can vary by host build; controller includes fallback signatures, but edge hosts may still require tuning.
+- Static object graphics in the thief hub can change with shard updates; retune only `recon.object_watch` entries in config.
+- Route waypoints are shard-evidence defaults near thief hub and may need coordinate adjustment if spawn/corridor pathing differs live.
+- Guard-token detection is name-based and conservative by policy; crowded sessions may trigger intentional fail-fast stops.
+- Unmatched watches are warning-only by default (`recon.fail_if_unresolved=False`) to keep recon runs finishable while collecting evidence.
+
+## Iteration Addendum (2026-03-07): Britain Long-Hop Pathfind Failure Fix
+
+## Task Summary
+Applied a route/interact fix after live run failure:
+- Failure observed: `Maximum distance exceeded` when trying to path directly from Britain spawn (`~2999,1030`) to thief-hub waypoint (`3409,3198`).
+- Root cause: first waypoint assumed same-map walk path; shard flow requires nearby `PublicDoor` use to enter Thieves Guild area.
+- Fix implemented:
+  - Added first waypoint at `3006,1108,0` with `interaction.type = "public_door"`.
+  - Interaction resolves object by `graphic+hue+name_tokens` (`oak shelf` / `trapdoor`), uses object, then verifies destination by region/proximity.
+  - Added policy `scan_enabled=False` on pre-guild hop waypoints so Britain-area scans do not trigger guard-token fail-fast.
+  - Travel state now conditionally skips scanning when `scan_enabled` is false and advances waypoint deterministically.
+
+## Testing Instructions
+1. Start from the same post-onboarding Britain spawn used in the failed run.
+2. Run `scripts/britain_thief_recon_controller.py`.
+3. Confirm sequence:
+   - `TRAVEL_TO_WAYPOINT` reaches `britain_public_door_to_thieves`
+   - `Executing waypoint interaction`
+   - `Waypoint interaction verified` with either `reason=expected_region` or `reason=expected_destination`
+   - `Waypoint scan skipped by policy` for the first 1-2 waypoints
+4. Confirm later waypoints enter `RECON_SCAN` and produce watch telemetry.
+
+## Expected Telemetry
+- `[FSM][TRAVEL_TO_WAYPOINT][INFO] Waypoint reached | waypoint_name=britain_public_door_to_thieves, ...`
+- `[FSM][TRAVEL_TO_WAYPOINT][INFO] Executing waypoint interaction | interaction_type=public_door, target_name=...`
+- `[FSM][TRAVEL_TO_WAYPOINT][INFO] Waypoint interaction verified | reason=expected_region|expected_destination, ...`
+- `[FSM][TRAVEL_TO_WAYPOINT][INFO] Waypoint scan skipped by policy | waypoint_name=britain_public_door_to_thieves, scan_enabled=False`
+
+## Known Fragilities
+- If the shard remaps public-door source tile or object identity (graphic/hue/name), retune only the first waypoint `interaction` block in config.
+- If entry region name differs from `the Thieves Guild`, update `interaction.expected_region` or rely on destination-distance verification.
+
+## Iteration Addendum (2026-03-07): ClassicAssist Macro Loader Added
+
+## Task Summary
+Added a thin Macro-tab loader file:
+- `scripts/britain_thief_recon_loader.py`
+- Appends repo `scripts` path, purges cached `confictura_bot*` and recon modules, then `execfile(...)` runs `britain_thief_recon_controller.py`.
+
+## Testing Instructions
+1. In ClassicAssist Macros, create a script from `scripts/britain_thief_recon_loader.py` content.
+2. Run from post-onboarding Britain spawn.
+3. Confirm first logs include API publication and `Starting BritainThiefReconController`.
+
+## Iteration Addendum (2026-03-07): Segmented Pathfinding For Spawn-to-Door Travel
+
+## Task Summary
+Applied controller-side movement hardening after live log still showed:
+- `Maximum distance exceeded` on first waypoint pathfind from spawn (`2999,1030`) to public-door source (`3006,1108`).
+
+Changes:
+- `scripts/britain_thief_recon_controller.py`
+  - Added bounded hop candidate planner:
+    - diagonal segment toward destination
+    - axis-X fallback
+    - axis-Y fallback
+  - `TRAVEL_TO_WAYPOINT` now uses segmented mode when `remaining_distance > runtime.pathfind_max_hop_distance`.
+  - Each segment call uses `safe_pathfind(..., fail_on_error=False)` and emits explicit candidate order telemetry.
+  - Added fail-stop checks for non-progressing segments (`pathfind_min_progress`).
+- `scripts/britain_thief_recon_config.py`
+  - Added runtime tuning keys:
+    - `pathfind_max_hop_distance: 12`
+    - `pathfind_min_progress: 1`
+
+## Testing Instructions
+1. Stand at spawn (`2999,1030`) and run recon loader.
+2. Confirm `TRAVEL_TO_WAYPOINT` logs:
+   - `strategy=safe_pathfind_segmented`
+   - `Segment path preconditions`
+   - repeated `Segment path progress` until within hop range
+3. Confirm state eventually reaches:
+   - `Waypoint reached | waypoint_name=britain_public_door_to_thieves`
+   - then door interaction logs.
+
+## Expected Telemetry
+- `[FSM][TRAVEL_TO_WAYPOINT][INFO] Action preconditions | ..., strategy=safe_pathfind_segmented, remaining_distance=..., max_hop_distance=12`
+- `[FSM][TRAVEL_TO_WAYPOINT][INFO] Segment path preconditions | candidate_order=...`
+- `[FSM][TRAVEL_TO_WAYPOINT][INFO] Segment path progress | before=..., after=..., progress=...`
+
+## Known Fragilities
+- If local terrain blocks all three hop candidates, run fails fast with `Segment pathfind failed` and candidate evidence payload.
+- If shard/client changes per-call movement limits, retune only `runtime.pathfind_max_hop_distance` in config.
