@@ -374,6 +374,10 @@ class BootstrapState(State):
         ctx.route_index = 0
         ctx.route_reports = []
 
+        generated_summary = ctx.config.get("test_harness", {}).get("generated_target_summary", {})
+        if isinstance(generated_summary, dict) and len(generated_summary) > 0:
+            Telemetry.info(self.key, "Generated target summary", generated_summary)
+
         Telemetry.info(self.key, "Bootstrap ready", {
             "route_count": len(plan),
             "stage_count": len(ctx.config.get("test_harness", {}).get("stages", [])),

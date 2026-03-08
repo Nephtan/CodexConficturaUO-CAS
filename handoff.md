@@ -993,7 +993,7 @@ Changes made:
 3. Confictura server code/world definitions must drive object IDs, names, and placement assumptions.
 4. Context menu handling requires shard-specific candidate strategies and explicit telemetry.
 5. Pathfind overload support varies by host; proximity intent should be enforced in controller logic.
-6. “Near but not exact tile” requires explicit sidestep behavior when `distance=0` occurs.
+6. ?Near but not exact tile? requires explicit sidestep behavior when `distance=0` occurs.
 7. One-retry policy gives faster signal and reduces noisy loops on deterministic failures.
 8. Completion verification should combine journal checks with world-state fallbacks.
 9. Optional-step skipping should be explicit policy, off by default for critical onboarding steps.
@@ -1159,7 +1159,7 @@ Expected effect:
 5. Context interactions require shard-safe fallbacks (named entry + numeric entry + telemetry evidence).
 6. Step policy must be explicit and data-driven (`enabled_flag`, `skip_if_mode`) with clear skip telemetry.
 7. Config booleans must be normalized robustly (bool/int/string) before policy decisions.
-8. Pathing intent matters: “within distance” and “avoid exact tile” need explicit controller logic, not just raw `Pathfind` calls.
+8. Pathing intent matters: ?within distance? and ?avoid exact tile? need explicit controller logic, not just raw `Pathfind` calls.
 9. Host/API signature variance is real (e.g., `Pathfind`/`FindType` overload behavior); wrappers and fallback paths are required.
 10. One-retry fail-fast policy is effective on this shard due low lag and deterministic failure modes.
 11. Completion checks should include world-state fallbacks (distance from start zone) in addition to journal-only checks.
@@ -1586,3 +1586,68 @@ What changed:
 
 ### Known Fragilities
 - If server enforces higher than 600ms during load/save windows, further tuning may still be required (recommended next step would be `650-750ms`).
+
+## Iteration Addendum (2026-03-08): Data-Driven Britain Coverage (Shop Signs + Spawners + Locations + Castle)
+
+### Task Summary
+Switched Britain pathing R&D from hand-picked coordinates to repository-derived target sets so runs validate real POIs.
+
+Updated files:
+- `scripts/britain_pathing_targets_generated.py` (new)
+- `scripts/britain_pathing_rd_config.py`
+- `scripts/britain_pathing_rd_controller.py`
+
+Data source used:
+- `ConficturaRepositoryDocs/ConficturaRepository.xml`
+  - `Data/Decoration/Sosaria/decorate.cfg`
+  - `Data/Spawns/towns.map`
+  - location index entries (`Britain`, `Britain Castle`)
+  - Britain region rectangles from region definitions
+
+Generated target summary (current):
+- `shop_sign_count=25`
+- `npc_spawner_count=121` (source dataset includes Britain city plus one Britain dungeons entry)
+- `location_count=56`
+- `location_index_count=2` (`Britain`, `Britain Castle`)
+- `castle_focus_count=63`
+- `total_unique_coordinates=204`
+
+Stage model now:
+1. `stage_1_local_sanity` (3 baseline checks)
+2. `stage_2_shop_signs` (generated)
+3. `stage_3_npc_spawners` (generated)
+4. `stage_4_locations_and_castle` (generated + location index)
+5. `stage_5_castle_focus` (optional; default disabled to avoid duplicate runtime)
+6. `stage_6_negative_unreachable` (bounded fail-stop checks)
+
+Default policy note:
+- `test_harness.generated_targets.include_dungeon_spawners` defaults to `False` so stage 3 stays city/castle-focused.
+- Set it to `True` if you want the Britain-dungeons guard spawn included.
+
+### Testing Instructions
+1. Run `scripts/britain_pathing_rd_loader.py`.
+2. Verify bootstrap shows generated coverage telemetry before routes start.
+3. Let stages 2-4 complete for full Britain POI pass.
+4. If runtime is too long, tune only limits in `scripts/britain_pathing_rd_config.py` under:
+   - `test_harness.generated_targets.shop_sign_limit`
+   - `test_harness.generated_targets.npc_spawner_limit`
+   - `test_harness.generated_targets.location_limit`
+   - `test_harness.generated_targets.location_index_limit`
+5. Optional castle stress pass:
+   - set `test_harness.generated_targets.include_castle_focus_stage = True`
+   - optionally set `castle_focus_limit`.
+
+### Expected Telemetry
+- Bootstrap:
+  - `[FSM][BOOTSTRAP][INFO] Generated target summary | shop_sign_count=..., npc_spawner_count=..., location_count=..., ...`
+  - `[FSM][BOOTSTRAP][INFO] Bootstrap ready | route_count=..., stage_count=...`
+- Per route (unchanged contract):
+  - `[FSM][RUN_ROUTE][INFO] Action preconditions | route_name=..., category=shop_sign|npc_spawner|location, source=generated_...`
+- Final summary:
+  - route/stage pass-fail rollup with deterministic stop reasons on failures.
+
+### Known Fragilities
+- `ConficturaRepository.xml` is a packed snapshot; if shard content changes and docs lag, generated target coverage can become stale.
+- Some generated POIs may be technically reachable only via specific approach vectors; expect occasional bounded failures in dense NPC traffic.
+- Full generated coverage is intentionally large; use limits for faster tuning loops before full-batch validation.
+
