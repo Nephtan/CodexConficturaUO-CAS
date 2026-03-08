@@ -1712,3 +1712,34 @@ What changed:
 - If `Pathfinding()` reports inconsistently in a specific ClassicUO build, the wait loop falls back to bounded polling and may still require higher `pathfinding_wait_ms`.
 - On very high latency, cancel-before-request can occasionally interrupt useful momentum; set `cancel_active_pathfind=False` if that pattern appears.
 - Repeat filtering is intentionally conservative; in extremely tight geometry, increasing `candidate_repeat_limit` to `3` may improve recovery.
+
+## Iteration Addendum (2026-03-08): Pathfinding() Optional-API Guard Fix
+
+### Task Summary
+Live test exposed a fatal host-interop gap: this client profile does not publish `Pathfinding()` into macro scope, and the new sync logic referenced it directly.
+
+Updated file:
+- `scripts/confictura_bot/pathing.py`
+
+Fix applied:
+- Added host-safe resolver `_pathfinding_active_or_none(state_name)`.
+- If `Pathfinding()` is unavailable:
+  - logs one warning (`Pathfinding() command unavailable; using settle-only fallback`)
+  - disables cancel/wait sync behavior gracefully
+  - continues with settle-based pacing instead of hard-failing.
+- `_cancel_active_pathfind(...)` and `_wait_for_pathfinding_idle(...)` now use optional feature-detection instead of direct symbol reference.
+
+### Testing Instructions
+1. Re-run `scripts/britain_pathing_rd_loader.py` from current location.
+2. Confirm no fatal exception at first route tick.
+3. Expect a single warning (once) about missing `Pathfinding()` and continued route execution.
+4. Capture first 3 `Pathing attempt` blocks to confirm the harness continues after warning.
+
+### Expected Telemetry
+- One-time warning:
+  - `[FSM][RUN_ROUTE][WARN] Pathfinding() command unavailable; using settle-only fallback`
+- No `Unhandled exception in tick` for `global name 'Pathfinding' is not defined`.
+
+### Known Fragilities
+- Without `Pathfinding()` availability, synchronization falls back to settle timing; if oscillation remains under load, increase `settle_ms/pathfinding_wait_ms` pacing together.
+

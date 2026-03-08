@@ -17,6 +17,8 @@ try:
 except Exception:
     _INTEGER_TYPES = (int,)
 
+_PATHFINDING_UNAVAILABLE_LOGGED = False
+
 
 def _to_int(value, default_value):
     try:
@@ -419,8 +421,25 @@ def _append_recent_point(history_points, point, max_window):
         history_points.pop(0)
 
 
+def _pathfinding_active_or_none(state_name):
+    global _PATHFINDING_UNAVAILABLE_LOGGED
+
+    pathfinding_fn = globals().get("Pathfinding")
+    if pathfinding_fn is None:
+        if not _PATHFINDING_UNAVAILABLE_LOGGED:
+            _PATHFINDING_UNAVAILABLE_LOGGED = True
+            Telemetry.warn(state_name, "Pathfinding() command unavailable; using settle-only fallback")
+        return None
+
+    try:
+        return bool(pathfinding_fn())
+    except Exception:
+        return False
+
 def _cancel_active_pathfind(ctx, state_name, pause_ms):
-    is_active = _safe_call(False, Pathfinding)
+    is_active = _pathfinding_active_or_none(state_name)
+    if is_active is None:
+        return False
     if not is_active:
         return False
 
@@ -452,8 +471,15 @@ def _wait_for_pathfinding_idle(ctx, state_name, timeout_ms, poll_ms):
     elapsed = 0
     observed_pathing = False
 
+    initial_active = _pathfinding_active_or_none(state_name)
+    if initial_active is None:
+        return True
+
     while elapsed < timeout:
-        is_pathing = _safe_call(False, Pathfinding)
+        is_pathing = _pathfinding_active_or_none(state_name)
+        if is_pathing is None:
+            return True
+
         if is_pathing:
             observed_pathing = True
 
