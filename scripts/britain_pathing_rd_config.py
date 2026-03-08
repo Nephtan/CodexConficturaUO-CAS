@@ -5,14 +5,15 @@
 
 BOT_CONFIG = {
     "runtime": {
-        "tick_pause_ms": 150,
+        "tick_pause_ms": 600,
         "max_runtime_ticks": 20000,
         "max_retries_per_state": 0,
-        "pause_between_routes_ms": 300
+        "pause_between_routes_ms": 600
     },
     "pathing_defaults": {
         "within_distance": 2,
-        "settle_ms": 350,
+        "min_action_delay_ms": 600,
+        "settle_ms": 600,
         "max_attempts": 120,
         "max_ms": 120000,
         "min_progress": 1,
@@ -21,7 +22,7 @@ BOT_CONFIG = {
         "hop_backoff_step": 2,
         "hop_recover_step": 1,
         "stall_tolerance": 4,
-        "stall_pause_ms": 250,
+        "stall_pause_ms": 600,
         "lateral_step": 1,
         "short_step_divisor": 2,
         "enforce_same_map": True,
@@ -177,3 +178,8 @@ BOT_CONFIG = {
         }
     }
 }
+
+
+
+
+

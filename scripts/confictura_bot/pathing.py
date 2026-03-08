@@ -126,7 +126,8 @@ def _normalize_options(options):
 
     normalized = {
         "within_distance": _to_int(options.get("within_distance", 1), 1),
-        "settle_ms": _to_int(options.get("settle_ms", 350), 350),
+        "min_action_delay_ms": _to_int(options.get("min_action_delay_ms", 600), 600),
+        "settle_ms": _to_int(options.get("settle_ms", 600), 600),
         "max_attempts": _to_int(options.get("max_attempts", 80), 80),
         "max_ms": _to_int(options.get("max_ms", 90000), 90000),
         "min_progress": _to_int(options.get("min_progress", 1), 1),
@@ -135,7 +136,7 @@ def _normalize_options(options):
         "hop_backoff_step": _to_int(options.get("hop_backoff_step", 2), 2),
         "hop_recover_step": _to_int(options.get("hop_recover_step", 1), 1),
         "stall_tolerance": _to_int(options.get("stall_tolerance", 4), 4),
-        "stall_pause_ms": _to_int(options.get("stall_pause_ms", 250), 250),
+        "stall_pause_ms": _to_int(options.get("stall_pause_ms", 600), 600),
         "lateral_step": _to_int(options.get("lateral_step", 1), 1),
         "short_step_divisor": _to_int(options.get("short_step_divisor", 2), 2),
         "enforce_same_map": _to_bool(options.get("enforce_same_map", True), True),
@@ -144,6 +145,8 @@ def _normalize_options(options):
 
     if normalized["within_distance"] < 0:
         normalized["within_distance"] = 0
+    if normalized["min_action_delay_ms"] < 600:
+        normalized["min_action_delay_ms"] = 600
     if normalized["settle_ms"] < 0:
         normalized["settle_ms"] = 0
     if normalized["max_attempts"] < 1:
@@ -172,6 +175,11 @@ def _normalize_options(options):
         normalized["short_step_divisor"] = 2
     if normalized["max_evidence_attempts"] < 1:
         normalized["max_evidence_attempts"] = 1
+
+    if normalized["settle_ms"] < normalized["min_action_delay_ms"]:
+        normalized["settle_ms"] = normalized["min_action_delay_ms"]
+    if normalized["stall_pause_ms"] < normalized["min_action_delay_ms"]:
+        normalized["stall_pause_ms"] = normalized["min_action_delay_ms"]
 
     return normalized
 
@@ -397,7 +405,10 @@ def navigate_to_coordinate(ctx, state_name, destination, options):
         "min_progress": opts["min_progress"],
         "stall_tolerance": opts["stall_tolerance"],
         "initial_distance": initial_distance,
-        "enforce_same_map": opts["enforce_same_map"]
+        "enforce_same_map": opts["enforce_same_map"],
+        "min_action_delay_ms": opts["min_action_delay_ms"],
+        "settle_ms": opts["settle_ms"],
+        "stall_pause_ms": opts["stall_pause_ms"]
     })
 
     if initial_distance <= opts["within_distance"]:
@@ -651,4 +662,5 @@ def navigate_to_coordinate(ctx, state_name, destination, options):
     })
 
     return result
+
 

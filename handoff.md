@@ -1548,3 +1548,41 @@ Expected effect:
   - `progress=<attempt_progress>`
   - `candidate_progress=<candidate_before_after_delta>`
 - In false-progress loops, `progress` should remain `0` and stall counter should rise toward deterministic stop.
+
+## Iteration Addendum (2026-03-08): Server Action Delay Floor Enforcement (600ms)
+
+### Task Summary
+Applied a hard minimum action-delay policy to avoid issuing movement/actions faster than shard tolerance.
+
+Updated files:
+- `scripts/confictura_bot/pathing.py`
+- `scripts/britain_pathing_rd_config.py`
+- `scripts/britain_pathing_rd_controller.py`
+
+What changed:
+- Shared pathing options now include `min_action_delay_ms` (default `600`).
+- `navigate_to_coordinate(...)` clamps both:
+  - `settle_ms >= min_action_delay_ms`
+  - `stall_pause_ms >= min_action_delay_ms`
+- Harness config defaults raised to 600ms pacing:
+  - `runtime.tick_pause_ms: 600`
+  - `runtime.pause_between_routes_ms: 600`
+  - `pathing_defaults.settle_ms: 600`
+  - `pathing_defaults.stall_pause_ms: 600`
+  - `pathing_defaults.min_action_delay_ms: 600`
+- Harness controller fallback for route-to-route pause updated to 600ms when config is absent.
+
+### Testing Instructions
+1. Start from current location `(3002, 1126, 0)`.
+2. Run `scripts/britain_pathing_rd_loader.py`.
+3. Confirm precondition telemetry prints:
+   - `min_action_delay_ms=600`
+   - `settle_ms=600`
+   - `stall_pause_ms=600`
+4. Spot-check pathing request cadence in logs to ensure no rapid sub-600 burst behavior.
+
+### Expected Telemetry
+- `[FSM][RUN_ROUTE][INFO] Pathing action preconditions | ..., min_action_delay_ms=600, settle_ms=600, stall_pause_ms=600`
+
+### Known Fragilities
+- If server enforces higher than 600ms during load/save windows, further tuning may still be required (recommended next step would be `650-750ms`).

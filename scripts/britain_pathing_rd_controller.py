@@ -471,7 +471,7 @@ class RunRouteState(State):
 
         ctx.route_index = route_index + 1
 
-        pause_between_routes = _to_int(ctx.config.get("runtime", {}).get("pause_between_routes_ms", 300), 300)
+        pause_between_routes = _to_int(ctx.config.get("runtime", {}).get("pause_between_routes_ms", 600), 600)
         if pause_between_routes > 0:
             try:
                 Pause(pause_between_routes)
@@ -683,3 +683,4 @@ def run_britain_pathing_rd_controller(config):
 
 
 run_britain_pathing_rd_controller(BOT_CONFIG)
+
