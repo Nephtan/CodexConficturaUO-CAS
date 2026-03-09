@@ -1850,3 +1850,64 @@ What changed:
 - Vendor detection uses mobile-name token matching from nearby spawner-derived names; if a shop has nonstandard vendor naming, add/adjust token derivation rules.
 - Anchor moves are bounded; if shop interior requires multi-door traversal or atypical elevation transitions, goal may fail even when area route is otherwise reachable.
 - Adaptive settle waiting improves evaluation quality but increases per-attempt latency; tune `hop_wait_*` if total run time becomes excessive.
+
+## Iteration Addendum (2026-03-08): Shop Interior Loop Fix (Visit-All Anchors + Mandatory Egress)
+
+### Task Summary
+Refined the shop-goal execution so the character does not linger inside interiors after entering.
+
+Updated files:
+- `scripts/britain_pathing_rd_controller.py`
+- `scripts/britain_pathing_rd_config.py`
+- `scripts/confictura_bot/pathing.py`
+
+What changed:
+- Replaced shop goal mobile acquisition from `GetEnemy/GetFriend` selectors with passive `Assistant.Engine.Mobiles` snapshot scanning.
+  - This removes repeated enemy-target selector churn during shop-goal scans.
+- Shop-goal behavior now executes as a deterministic sequence:
+  1. collect vendor evidence,
+  2. walk to each vendor anchor point (`shop_goal_vendor_anchor_points`),
+  3. verify token/anchor requirements,
+  4. walk back to configured shop exit point (`shop_goal_exit_point`, default route destination).
+- Added strict goal policy flags per shop route:
+  - `shop_goal_require_all_vendor_tokens`
+  - `shop_goal_require_all_anchors`
+  - `shop_goal_exit_required`
+  - `shop_goal_exit_within_distance`, `shop_goal_exit_max_attempts`, `shop_goal_exit_max_ms`
+- Tightened generated anchor discovery:
+  - reduced default spawner radius from 14 -> 10
+  - added `max_spawner_z_delta` filter to avoid mixed-floor anchors
+  - increased token/anchor caps to support full in-shop traversal (up to 10)
+- Preserved route metadata in fixed-route normalization:
+  - `goal_type`, `target_name`, `target_area`, `target_class` now survive controller normalization.
+- Repaired `pathing.py` awareness call corruption and ensured awareness fallback guard is defined.
+
+### Testing Instructions
+1. Start in Britain and run `scripts/britain_pathing_rd_loader.py`.
+2. Focus on stage 2 shop routes, especially:
+   - `shop_sign_012_the_hammer_and_anvil`
+3. Verify route log shows preserved goal metadata:
+   - `goal_type=shop_visit`
+   - `goal_enabled=True`
+4. For successful shop goals, verify sequence telemetry:
+   - `Shop goal preconditions`
+   - one or more `Shop goal anchor move`
+   - `Shop goal egress move`
+   - route result with `goal_reason=vendor_and_egress_complete`
+5. Confirm the character exits the shop area after vendor-anchor passes and proceeds to next shop route.
+6. Confirm enemy selector spam from shop-goal scanning is absent/reduced (no repeated goal-side `Target: ... [Enemy]` churn).
+
+### Expected Telemetry
+- Goal-enabled shop routes should report:
+  - `goal_type=shop_visit`
+  - `goal_anchors_attempted>0` for anchor-enabled shops
+- On failure, deterministic reasons should now identify exact goal phase:
+  - `vendor_not_observed`
+  - `vendor_tokens_missing_*`
+  - `anchor_reach_failed_*`
+  - `egress_failed_*`
+
+### Known Fragilities
+- Anchor quality depends on nearby spawner-derived coordinates; unusual interiors may still need manual radius/z tuning.
+- Strict all-anchor/all-token policy can fail shops with temporarily blocked interiors or dynamic NPC displacement.
+- If a shop sign destination is not a valid exterior egress tile, set a custom `shop_goal_exit_point` for that route.

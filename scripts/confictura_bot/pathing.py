@@ -18,6 +18,7 @@ except Exception:
     _INTEGER_TYPES = (int,)
 
 _PATHFINDING_UNAVAILABLE_LOGGED = False
+_AWARENESS_ENGINE_UNAVAILABLE_LOGGED = False
 
 
 def _to_int(value, default_value):
@@ -452,105 +453,6 @@ def _append_recent_point(history_points, point, max_window):
         history_points.pop(0)
 
 
-def _invoke_get_enemy_any(scan_range):
-    attempts = [
-        (["Any"], "Any", "Next", "Any", scan_range),
-        (["Any"], "Any", "Next", scan_range),
-        (["Any"], "Next", scan_range)
-    ]
-
-    idx = 0
-    while idx < len(attempts):
-        args = attempts[idx]
-        idx += 1
-
-        try:
-            return GetEnemy(*args)
-        except Exception:
-            continue
-
-    return False
-
-
-def _quick_mobile_awareness_scan(scan_range, max_entities):
-    rows = []
-    seen_serials = {}
-    sample_names = {}
-
-    try:
-        ClearIgnoreList()
-    except Exception:
-        pass
-
-    idx = 0
-    while idx < max_entities:
-        found_mobile = _invoke_get_enemy_any(scan_range)
-        if not found_mobile:
-            break
-
-        serial_value = _to_int(_safe_call(0, GetAlias, "enemy"), 0)
-        if serial_value <= 0:
-            break
-
-        if serial_value in seen_serials:
-            try:
-                IgnoreObject("enemy")
-            except Exception:
-                pass
-            idx += 1
-            continue
-
-        seen_serials[serial_value] = True
-
-        name_text = _safe_call("", Name, "enemy")
-        distance_value = _to_int(_safe_call(-1, Distance, "enemy"), -1)
-
-        rows.append({
-            "serial": serial_value,
-            "name": name_text,
-            "distance": distance_value
-        })
-
-        lowered_name = ""
-        try:
-            lowered_name = str(name_text).strip().lower()
-        except Exception:
-            lowered_name = ""
-
-        if len(lowered_name) > 0 and lowered_name not in sample_names:
-            sample_names[lowered_name] = True
-
-        try:
-            IgnoreObject("enemy")
-        except Exception:
-            pass
-
-        try:
-            Pause(10)
-        except Exception:
-            pass
-
-        idx += 1
-
-    try:
-        ClearIgnoreList()
-    except Exception:
-        pass
-
-    sample = []
-    for name_key in sample_names.keys():
-        sample.append(name_key)
-
-    sample.sort()
-    if len(sample) > 6:
-        sample = sample[:6]
-
-    return {
-        "rows": rows,
-        "sample_names": sample
-    }
-
-
 def _estimate_hop_wait_budget_ms(current_point, candidate_point, opts):
     candidate_distance = _distance_between(current_point, candidate_point)
     per_tile_ms = _to_int(opts.get("hop_wait_per_tile_ms", 220), 220)
@@ -567,11 +469,144 @@ def _estimate_hop_wait_budget_ms(current_point, candidate_point, opts):
     return wait_budget
 
 
-def _wait_for_hop_settle(state_name, candidate_point, destination_point, wait_budget_ms, poll_ms, stable_polls, candidate_within):
+
+def _snapshot_engine_mobiles(scan_range, max_entities):
+    rows = []
+    sample_names = {}
+    seen_serials = {}
+
+    try:
+        from Assistant import Engine
+    except Exception as ex:
+        return {
+            "ok": False,
+            "error": "engine_import_failed:{0}".format(str(ex)),
+            "rows": [],
+            "sample_names": []
+        }
+
+    player = None
+    try:
+        player = Engine.Player
+    except Exception:
+        player = None
+
+    if player is None:
+        return {
+            "ok": False,
+            "error": "player_unavailable",
+            "rows": [],
+            "sample_names": []
+        }
+
+    player_serial = _to_int(getattr(player, "Serial", 0), 0)
+    px = _to_int(getattr(player, "X", 0), 0)
+    py = _to_int(getattr(player, "Y", 0), 0)
+    pz = _to_int(getattr(player, "Z", 0), 0)
+
+    mobiles = None
+    try:
+        mobiles = Engine.Mobiles
+    except Exception:
+        mobiles = None
+
+    if mobiles is None:
+        return {
+            "ok": False,
+            "error": "mobiles_unavailable",
+            "rows": [],
+            "sample_names": []
+        }
+
+    for mobile in mobiles:
+        if len(rows) >= max_entities:
+            break
+
+        if mobile is None:
+            continue
+
+        serial_value = _to_int(getattr(mobile, "Serial", 0), 0)
+        if serial_value <= 0:
+            continue
+        if serial_value == player_serial:
+            continue
+        if serial_value in seen_serials:
+            continue
+
+        mx = _to_int(getattr(mobile, "X", 0), 0)
+        my = _to_int(getattr(mobile, "Y", 0), 0)
+        mz = _to_int(getattr(mobile, "Z", 0), 0)
+
+        distance_value = max(abs(mx - px), abs(my - py), abs(mz - pz))
+        if distance_value > scan_range:
+            continue
+
+        seen_serials[serial_value] = True
+
+        name_text = ""
+        try:
+            name_text = str(getattr(mobile, "Name", ""))
+        except Exception:
+            name_text = ""
+
+        rows.append({
+            "serial": serial_value,
+            "name": name_text,
+            "distance": distance_value
+        })
+
+        lowered_name = ""
+        try:
+            lowered_name = str(name_text).strip().lower()
+        except Exception:
+            lowered_name = ""
+
+        if len(lowered_name) > 0 and lowered_name not in sample_names:
+            sample_names[lowered_name] = True
+
+    sample = []
+    for name_key in sample_names.keys():
+        sample.append(name_key)
+
+    sample.sort()
+    if len(sample) > 6:
+        sample = sample[:6]
+
+    return {
+        "ok": True,
+        "rows": rows,
+        "sample_names": sample
+    }
+
+
+def _quick_mobile_awareness_scan(state_name, scan_range, max_entities):
+    global _AWARENESS_ENGINE_UNAVAILABLE_LOGGED
+
+    awareness_result = _snapshot_engine_mobiles(scan_range, max_entities)
+    if _to_bool(awareness_result.get("ok", False), False):
+        return {
+            "rows": awareness_result.get("rows", []),
+            "sample_names": awareness_result.get("sample_names", [])
+        }
+
+    if not _AWARENESS_ENGINE_UNAVAILABLE_LOGGED:
+        _AWARENESS_ENGINE_UNAVAILABLE_LOGGED = True
+        Telemetry.warn(state_name, "Awareness scan unavailable; skipping non-essential mobile scan", {
+            "error": awareness_result.get("error", "unknown")
+        })
+
+    return {
+        "rows": [],
+        "sample_names": []
+    }
+
+
+def _wait_for_hop_settle(state_name, candidate_point, destination_point, wait_budget_ms, poll_ms, stable_polls, candidate_within, min_settle_ms):
     wait_budget = _to_int(wait_budget_ms, 0)
     poll = _to_int(poll_ms, 100)
     stable_target = _to_int(stable_polls, 3)
     candidate_stop = _to_int(candidate_within, 1)
+    min_settle = _to_int(min_settle_ms, 600)
 
     if poll < 50:
         poll = 50
@@ -579,6 +614,10 @@ def _wait_for_hop_settle(state_name, candidate_point, destination_point, wait_bu
         stable_target = 1
     if candidate_stop < 0:
         candidate_stop = 0
+    if min_settle < 0:
+        min_settle = 0
+    if min_settle < poll:
+        min_settle = poll
     if wait_budget <= 0:
         wait_budget = poll
 
@@ -587,6 +626,7 @@ def _wait_for_hop_settle(state_name, candidate_point, destination_point, wait_bu
     stable_count = 0
     moved_polls = 0
     startup_wait_ms = poll * 2
+    no_movement_wait_ms = min_settle
 
     start_point = _point_from_snapshot(_snapshot_self())
     last_point = start_point
@@ -634,10 +674,15 @@ def _wait_for_hop_settle(state_name, candidate_point, destination_point, wait_bu
             last_point = current_point
             break
 
-        if stable_count >= stable_target and elapsed >= startup_wait_ms:
-            reason = "movement_settled"
-            last_point = current_point
-            break
+        if stable_count >= stable_target:
+            if moved_polls > 0 and elapsed >= startup_wait_ms:
+                reason = "movement_settled"
+                last_point = current_point
+                break
+            if moved_polls <= 0 and elapsed >= no_movement_wait_ms:
+                reason = "movement_not_started"
+                last_point = current_point
+                break
 
         last_point = current_point
 
@@ -652,7 +697,6 @@ def _wait_for_hop_settle(state_name, candidate_point, destination_point, wait_bu
         "final_candidate_distance": final_candidate_distance,
         "final_destination_distance": final_destination_distance
     }
-
 
 def _pathfinding_active_or_none(state_name):
     global _PATHFINDING_UNAVAILABLE_LOGGED
@@ -904,6 +948,7 @@ def navigate_to_coordinate(ctx, state_name, destination, options):
 
         if opts["hop_awareness_enabled"] and stall_count > 0:
             awareness_result = _quick_mobile_awareness_scan(
+                state_name,
                 opts["hop_awareness_range"],
                 opts["hop_awareness_max_entities"]
             )
@@ -1034,7 +1079,8 @@ def navigate_to_coordinate(ctx, state_name, destination, options):
                     hop_wait_budget_ms,
                     opts["hop_wait_poll_ms"],
                     opts["hop_wait_stable_polls"],
-                    opts["hop_wait_candidate_within"]
+                    opts["hop_wait_candidate_within"],
+                    opts["settle_ms"]
                 )
 
                 hop_wait_elapsed_ms = _to_int(hop_wait_result.get("elapsed_ms", 0), 0)

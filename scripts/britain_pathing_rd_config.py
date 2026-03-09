@@ -159,9 +159,10 @@ def _apply_shop_visit_goals(fixed_routes, shop_route_names, goal_cfg):
     if not _to_bool(goal_cfg.get("enabled", True), True):
         return
 
-    search_radius = _to_int(goal_cfg.get("spawner_search_radius", 14), 14)
-    max_vendor_tokens = _to_int(goal_cfg.get("max_vendor_tokens", 4), 4)
-    max_anchor_points = _to_int(goal_cfg.get("max_anchor_points", 2), 2)
+    search_radius = _to_int(goal_cfg.get("spawner_search_radius", 10), 10)
+    max_vendor_tokens = _to_int(goal_cfg.get("max_vendor_tokens", 10), 10)
+    max_anchor_points = _to_int(goal_cfg.get("max_anchor_points", 10), 10)
+    max_z_delta = _to_int(goal_cfg.get("max_spawner_z_delta", 8), 8)
 
     if search_radius < 1:
         search_radius = 1
@@ -169,6 +170,8 @@ def _apply_shop_visit_goals(fixed_routes, shop_route_names, goal_cfg):
         max_vendor_tokens = 1
     if max_anchor_points < 1:
         max_anchor_points = 1
+    if max_z_delta < 0:
+        max_z_delta = 0
 
     route_lookup = {}
     idx = 0
@@ -207,6 +210,10 @@ def _apply_shop_visit_goals(fixed_routes, shop_route_names, goal_cfg):
 
             distance_value = _distance_between(destination, spawner_point)
             if distance_value > search_radius:
+                continue
+
+            z_delta = abs(_to_int(destination[2], 0) - _to_int(spawner_point[2], 0))
+            if z_delta > max_z_delta:
                 continue
 
             vendor_candidates.append({
@@ -253,8 +260,15 @@ def _apply_shop_visit_goals(fixed_routes, shop_route_names, goal_cfg):
         options["shop_goal_vendor_max_scans"] = _to_int(goal_cfg.get("vendor_max_scans", 16), 16)
         options["shop_goal_vendor_within_distance"] = _to_int(goal_cfg.get("vendor_within_distance", 2), 2)
         options["shop_goal_vendor_required"] = _to_bool(goal_cfg.get("vendor_required", True), True) and (len(vendor_tokens) > 0 or len(anchor_points) > 0)
+        options["shop_goal_require_all_vendor_tokens"] = _to_bool(goal_cfg.get("require_all_vendor_tokens", True), True)
+        options["shop_goal_require_all_anchors"] = _to_bool(goal_cfg.get("require_all_anchors", True), True)
         options["shop_goal_max_attempts"] = _to_int(goal_cfg.get("goal_max_attempts", 30), 30)
         options["shop_goal_max_ms"] = _to_int(goal_cfg.get("goal_max_ms", 30000), 30000)
+        options["shop_goal_exit_required"] = _to_bool(goal_cfg.get("exit_required", True), True)
+        options["shop_goal_exit_within_distance"] = _to_int(goal_cfg.get("exit_within_distance", 2), 2)
+        options["shop_goal_exit_max_attempts"] = _to_int(goal_cfg.get("exit_max_attempts", 30), 30)
+        options["shop_goal_exit_max_ms"] = _to_int(goal_cfg.get("exit_max_ms", 30000), 30000)
+        options["shop_goal_exit_point"] = destination
 
         route_row["options"] = options
         route_row["goal_type"] = "shop_visit"
@@ -409,15 +423,22 @@ def _build_generated_routes(generated_cfg):
 
 _SHOP_VISIT_GOAL_DEFAULTS = {
     "enabled": True,
-    "spawner_search_radius": 14,
-    "max_vendor_tokens": 4,
-    "max_anchor_points": 2,
+    "spawner_search_radius": 10,
+    "max_vendor_tokens": 10,
+    "max_anchor_points": 10,
+    "max_spawner_z_delta": 8,
     "vendor_scan_range": 12,
     "vendor_max_scans": 16,
     "vendor_within_distance": 2,
     "vendor_required": True,
+    "require_all_vendor_tokens": True,
+    "require_all_anchors": True,
     "goal_max_attempts": 30,
-    "goal_max_ms": 30000
+    "goal_max_ms": 30000,
+    "exit_required": True,
+    "exit_within_distance": 2,
+    "exit_max_attempts": 30,
+    "exit_max_ms": 30000
 }
 
 _GENERATED_TARGET_CONFIG = {
