@@ -1743,3 +1743,53 @@ Fix applied:
 ### Known Fragilities
 - Without `Pathfinding()` availability, synchronization falls back to settle timing; if oscillation remains under load, increase `settle_ms/pathfinding_wait_ms` pacing together.
 
+## Iteration Addendum (2026-03-08): Interior Oscillation Clamp (Best-Distance Regression Guard)
+
+### Task Summary
+Added a hard anti-oscillation control that tracks route quality against the **best distance reached so far**. This prevents endless inside-structure ping-pong from being treated as healthy progress.
+
+Updated files:
+- `scripts/confictura_bot/pathing.py`
+- `scripts/britain_pathing_rd_config.py`
+
+What changed:
+- Added pathing options:
+  - `max_regression_from_best` (default clamp in module, configured to `2` in RnD config)
+  - `no_best_progress_tolerance` (default `12`)
+- Progress qualification now requires both:
+  - `attempt_progress >= min_progress`
+  - `after_distance <= (best_distance + max_regression_from_best)`
+- Added deterministic fail-stop:
+  - `stop_reason=no_best_progress_exceeded`
+  - triggers when attempts since last **new best** exceed tolerance.
+- Telemetry now includes best-distance context:
+  - per-attempt debug includes `best_distance`, `attempts_since_best`
+  - candidate result rows include `best_distance_before`, `regression_from_best`, `new_best`
+  - progress/stall/final logs include `attempts_since_best` fields.
+
+### Testing Instructions
+1. Run `scripts/britain_pathing_rd_loader.py` from Britain center (same setup as latest failed run).
+2. Watch the problematic stage/routes where building loops were observed (shop sign routes near blacksmith area).
+3. Verify preconditions include:
+   - `max_regression_from_best=2`
+   - `no_best_progress_tolerance=12`
+4. Confirm long ping-pong loops now terminate with deterministic reason:
+   - `stop_reason=no_best_progress_exceeded`
+5. Share one failing route block containing:
+   - first 3 `Pathing attempt` lines,
+   - first `Pathing stall detected`,
+   - terminal `Pathing finished without success` + `Route test failed`.
+
+### Expected Telemetry
+- Candidate rows now show:
+  - `best_distance_before=...`
+  - `regression_from_best=...`
+  - optional `progress_disqualified=regression_guard`
+- Terminal warning path for this condition:
+  - `Pathing no-best-progress tolerance exceeded`
+  - `stop_reason=no_best_progress_exceeded`
+
+### Known Fragilities
+- If a valid route truly requires long detours away from current best point, this guard may stop earlier than before. Tune by raising:
+  - `max_regression_from_best` (e.g. `3-4`)
+  - `no_best_progress_tolerance` (e.g. `16-20`)

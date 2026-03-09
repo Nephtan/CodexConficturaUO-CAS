@@ -334,7 +334,9 @@ BOT_CONFIG = {
         "candidate_repeat_window": 12,
         "candidate_repeat_limit": 2,
         "near_target_distance": 6,
-        "near_target_stall_tolerance": 2
+        "near_target_stall_tolerance": 2,
+        "max_regression_from_best": 2,
+        "no_best_progress_tolerance": 12
     },
     "test_harness": {
         "success_rate_target_percent": 90,
@@ -345,7 +347,8 @@ BOT_CONFIG = {
             "max_attempts_exceeded",
             "max_ms_exceeded",
             "map_changed",
-            "near_target_oscillation"
+            "near_target_oscillation",
+            "no_best_progress_exceeded"
         ],
         "stages": [
             {

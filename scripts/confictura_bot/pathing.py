@@ -150,7 +150,9 @@ def _normalize_options(options):
         "candidate_repeat_window": _to_int(options.get("candidate_repeat_window", 12), 12),
         "candidate_repeat_limit": _to_int(options.get("candidate_repeat_limit", 2), 2),
         "near_target_distance": _to_int(options.get("near_target_distance", 6), 6),
-        "near_target_stall_tolerance": _to_int(options.get("near_target_stall_tolerance", 2), 2)
+        "near_target_stall_tolerance": _to_int(options.get("near_target_stall_tolerance", 2), 2),
+        "max_regression_from_best": _to_int(options.get("max_regression_from_best", 3), 3),
+        "no_best_progress_tolerance": _to_int(options.get("no_best_progress_tolerance", 12), 12)
     }
 
     if normalized["within_distance"] < 0:
@@ -199,6 +201,10 @@ def _normalize_options(options):
         normalized["near_target_distance"] = 0
     if normalized["near_target_stall_tolerance"] < 1:
         normalized["near_target_stall_tolerance"] = 1
+    if normalized["max_regression_from_best"] < 0:
+        normalized["max_regression_from_best"] = 0
+    if normalized["no_best_progress_tolerance"] < 1:
+        normalized["no_best_progress_tolerance"] = 1
 
     if normalized["max_hop_distance"] > normalized["client_pathfind_max_distance"]:
         normalized["max_hop_distance"] = normalized["client_pathfind_max_distance"]
@@ -578,7 +584,9 @@ def navigate_to_coordinate(ctx, state_name, destination, options):
         "candidate_repeat_window": opts["candidate_repeat_window"],
         "candidate_repeat_limit": opts["candidate_repeat_limit"],
         "near_target_distance": opts["near_target_distance"],
-        "near_target_stall_tolerance": opts["near_target_stall_tolerance"]
+        "near_target_stall_tolerance": opts["near_target_stall_tolerance"],
+        "max_regression_from_best": opts["max_regression_from_best"],
+        "no_best_progress_tolerance": opts["no_best_progress_tolerance"]
     })
 
     if initial_distance <= opts["within_distance"]:
@@ -596,6 +604,7 @@ def navigate_to_coordinate(ctx, state_name, destination, options):
     hop_size = opts["max_hop_distance"]
     stall_count = 0
     attempts = 0
+    attempts_since_best = 0
     stop_reason = ""
 
     recent_selected_points = []
@@ -664,7 +673,11 @@ def navigate_to_coordinate(ctx, state_name, destination, options):
             "stall_count": stall_count,
             "client_pathfind_max_distance": opts["client_pathfind_max_distance"],
             "candidate_repeat_limit": opts["candidate_repeat_limit"],
-            "candidate_repeat_window": opts["candidate_repeat_window"]
+            "candidate_repeat_window": opts["candidate_repeat_window"],
+            "best_distance": evidence["best_distance"],
+            "attempts_since_best": attempts_since_best,
+            "max_regression_from_best": opts["max_regression_from_best"],
+            "no_best_progress_tolerance": opts["no_best_progress_tolerance"]
         })
 
         progressed = False
@@ -678,6 +691,8 @@ def navigate_to_coordinate(ctx, state_name, destination, options):
         selected_point = None
         selected_repeat_count = 0
         selected_forced = False
+        selected_regression_from_best = 0
+        selected_new_best = False
 
         selected_row = None
         idx = 0
@@ -746,8 +761,25 @@ def navigate_to_coordinate(ctx, state_name, destination, options):
             after_distance = _distance_between(_point_from_snapshot(_snapshot_self()), destination_point)
             candidate_progress_delta = before_distance - after_distance
             attempt_progress_delta = attempt_start_distance - after_distance
+            best_distance_before = evidence["best_distance"]
+            regression_from_best = after_distance - best_distance_before
+            made_new_best = False
 
-            row_text = "{0}:{1},{2},{3}:ok={4}:before={5}:after={6}:candidate_progress={7}:attempt_progress={8}:repeat_count={9}".format(
+            if after_distance < best_distance_before:
+                evidence["best_distance"] = after_distance
+                made_new_best = True
+                attempts_since_best = 0
+            else:
+                attempts_since_best += 1
+
+            within_regression_guard = regression_from_best <= opts["max_regression_from_best"]
+            qualifies_progress = (
+                (not pause_unavailable) and
+                attempt_progress_delta >= opts["min_progress"] and
+                within_regression_guard
+            )
+
+            row_text = "{0}:{1},{2},{3}:ok={4}:before={5}:after={6}:candidate_progress={7}:attempt_progress={8}:repeat_count={9}:best_distance_before={10}:regression_from_best={11}:new_best={12}".format(
                 selected_label,
                 candidate_point[0],
                 candidate_point[1],
@@ -757,7 +789,10 @@ def navigate_to_coordinate(ctx, state_name, destination, options):
                 after_distance,
                 candidate_progress_delta,
                 attempt_progress_delta,
-                selected_repeat_count
+                selected_repeat_count,
+                best_distance_before,
+                regression_from_best,
+                made_new_best
             )
 
             if selected_forced:
@@ -766,17 +801,25 @@ def navigate_to_coordinate(ctx, state_name, destination, options):
                 row_text = "{0}:cancelled_active_pathfind=True".format(row_text)
             if len(exception_text) > 0:
                 row_text = "{0}:exception={1}".format(row_text, exception_text)
+            if attempt_progress_delta >= opts["min_progress"] and not within_regression_guard:
+                row_text = "{0}:progress_disqualified=regression_guard:max_regression_from_best={1}".format(
+                    row_text,
+                    opts["max_regression_from_best"]
+                )
 
             candidate_rows.append(row_text)
             _append_recent_point(recent_selected_points, candidate_point, opts["candidate_repeat_window"])
 
-            if not pause_unavailable and attempt_progress_delta >= opts["min_progress"]:
+            if qualifies_progress:
                 progressed = True
                 selected_before = attempt_start_distance
                 selected_after = after_distance
                 selected_progress = attempt_progress_delta
                 selected_candidate_progress = candidate_progress_delta
+                selected_regression_from_best = regression_from_best
+                selected_new_best = made_new_best
         else:
+            attempts_since_best += 1
             candidate_rows.append("none:selected=False:reason=no_candidate_available")
 
         if pause_unavailable:
@@ -790,6 +833,7 @@ def navigate_to_coordinate(ctx, state_name, destination, options):
             "before_distance": remaining_distance,
             "hop_size": hop_size,
             "stall_count_before": stall_count,
+            "attempts_since_best": attempts_since_best,
             "candidate_order": evidence["candidate_order_last"],
             "candidate_results": evidence["candidate_results_last"]
         }
@@ -802,15 +846,25 @@ def navigate_to_coordinate(ctx, state_name, destination, options):
         if len(stop_reason) > 0:
             break
 
+        if attempts_since_best > opts["no_best_progress_tolerance"]:
+            stop_reason = "no_best_progress_exceeded"
+            _ctx_fail(ctx, state_name, "Pathing no-best-progress tolerance exceeded", {
+                "attempt": attempts,
+                "attempts_since_best": attempts_since_best,
+                "no_best_progress_tolerance": opts["no_best_progress_tolerance"],
+                "best_distance": evidence["best_distance"],
+                "remaining_distance": _distance_between(_point_from_snapshot(_snapshot_self()), destination_point),
+                "candidate_order": evidence["candidate_order_last"],
+                "candidate_results": evidence["candidate_results_last"]
+            })
+            break
+
         if progressed:
             stall_count = 0
             if hop_size < opts["max_hop_distance"]:
                 hop_size += opts["hop_recover_step"]
                 if hop_size > opts["max_hop_distance"]:
                     hop_size = opts["max_hop_distance"]
-
-            if selected_after < evidence["best_distance"]:
-                evidence["best_distance"] = selected_after
 
             Telemetry.info(state_name, "Pathing progress", {
                 "attempt": attempts,
@@ -822,7 +876,11 @@ def navigate_to_coordinate(ctx, state_name, destination, options):
                 "candidate_progress": selected_candidate_progress,
                 "next_hop_size": hop_size,
                 "repeat_count": selected_repeat_count,
-                "forced_selection": selected_forced
+                "forced_selection": selected_forced,
+                "best_distance": evidence["best_distance"],
+                "regression_from_best": selected_regression_from_best,
+                "attempts_since_best": attempts_since_best,
+                "new_best": selected_new_best
             })
             continue
 
@@ -840,6 +898,8 @@ def navigate_to_coordinate(ctx, state_name, destination, options):
             "stall_tolerance": opts["stall_tolerance"],
             "next_hop_size": hop_size,
             "remaining_distance": stall_distance,
+            "best_distance": evidence["best_distance"],
+            "attempts_since_best": attempts_since_best,
             "candidate_order": evidence["candidate_order_last"],
             "candidate_results": evidence["candidate_results_last"]
         })
@@ -852,6 +912,8 @@ def navigate_to_coordinate(ctx, state_name, destination, options):
                 "near_target_distance": opts["near_target_distance"],
                 "near_target_stall_tolerance": opts["near_target_stall_tolerance"],
                 "remaining_distance": stall_distance,
+                "best_distance": evidence["best_distance"],
+                "attempts_since_best": attempts_since_best,
                 "candidate_order": evidence["candidate_order_last"],
                 "candidate_results": evidence["candidate_results_last"]
             })
@@ -864,6 +926,8 @@ def navigate_to_coordinate(ctx, state_name, destination, options):
                 "stall_count": stall_count,
                 "stall_tolerance": opts["stall_tolerance"],
                 "remaining_distance": stall_distance,
+                "best_distance": evidence["best_distance"],
+                "attempts_since_best": attempts_since_best,
                 "candidate_order": evidence["candidate_order_last"],
                 "candidate_results": evidence["candidate_results_last"]
             })
@@ -890,6 +954,7 @@ def navigate_to_coordinate(ctx, state_name, destination, options):
             stop_reason = "within_distance_reached"
 
     evidence["stall_count_final"] = stall_count
+    evidence["attempts_since_best_final"] = attempts_since_best
     evidence["final_position"] = final_snapshot
 
     result["stop_reason"] = stop_reason
@@ -911,8 +976,10 @@ def navigate_to_coordinate(ctx, state_name, destination, options):
         "elapsed_ms": result["elapsed_ms"],
         "final_distance": result["final_distance"],
         "best_distance": evidence["best_distance"],
-        "stall_count_final": stall_count
+        "stall_count_final": stall_count,
+        "attempts_since_best_final": attempts_since_best
     })
 
     return result
+
 
