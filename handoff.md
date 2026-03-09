@@ -1793,3 +1793,60 @@ What changed:
 - If a valid route truly requires long detours away from current best point, this guard may stop earlier than before. Tune by raising:
   - `max_regression_from_best` (e.g. `3-4`)
   - `no_best_progress_tolerance` (e.g. `16-20`)
+
+## Iteration Addendum (2026-03-08): Shop-Visit Goals + Adaptive Hop Settle + Stall Awareness
+
+### Task Summary
+Implemented a concrete "visit each shop" goal path and added hop-level movement/awareness controls to reduce interior ping-pong and false stalls.
+
+Updated files:
+- `scripts/confictura_bot/pathing.py`
+- `scripts/britain_pathing_rd_config.py`
+- `scripts/britain_pathing_rd_controller.py`
+
+What changed:
+- Shop routes now carry goal metadata derived from generated Britain targets:
+  - `goal_type=shop_visit`
+  - `shop_goal_vendor_tokens` and `shop_goal_vendor_anchor_points`
+- RUN_ROUTE now executes a shop-goal phase for routes with `shop_goal_enabled=True`:
+  - scans nearby mobiles for vendor-token matches
+  - if needed, tries anchor points near the shop sign
+  - attempts vendor approach (within goal distance)
+  - route pass/fail now incorporates goal outcome (`shop_goal_failed_*`)
+- Added adaptive hop settle wait in shared pathing:
+  - wait budget scales with hop size (`hop_wait_per_tile_ms`, min/max clamp)
+  - polls until candidate reached or movement settles
+  - avoids evaluating progress too early while client is still auto-walking
+- Added lightweight stall-time awareness scan in shared pathing:
+  - captures nearby mobile count + sample names in attempt telemetry when stalled
+- Relaxed regression/best-progress defaults for city geometry:
+  - `max_regression_from_best=4`
+  - `no_best_progress_tolerance=20`
+
+### Testing Instructions
+1. Run `scripts/britain_pathing_rd_loader.py` from Britain city center.
+2. Let stage 2 (`shop_signs`) run at least 8-10 routes.
+3. Verify per-route preconditions include new hop/awareness knobs:
+   - `hop_wait_per_tile_ms`, `hop_wait_min_ms`, `hop_wait_max_ms`
+   - `hop_wait_poll_ms`, `hop_wait_stable_polls`, `hop_wait_candidate_within`
+   - `hop_awareness_enabled`, `hop_awareness_range`, `hop_awareness_max_entities`
+4. Verify shop-goal telemetry appears for shop routes:
+   - `Shop goal preconditions`
+   - optional `Shop goal anchor move`
+   - `Shop goal vendor approach`
+5. Confirm route outcome payload now includes goal fields:
+   - `goal_enabled`, `goal_passed`, `goal_reason`, `goal_vendor`, `goal_vendor_serial`, `goal_anchors_attempted`
+6. If a route reaches sign but not vendor, expect deterministic goal failure reason:
+   - `pass_reason=shop_goal_failed_*`
+
+### Expected Telemetry
+- Pathing progress rows now include hop settle evidence:
+  - `hop_wait_reason`, `hop_wait_elapsed_ms`
+- Candidate result rows now include:
+  - `hop_wait_budget_ms`, `hop_wait_elapsed_ms`, `hop_wait_reason`, `hop_wait_candidate_distance`, `hop_wait_moved_polls`
+- Route test logs now include goal context fields (type/enabled/passed/reason/vendor).
+
+### Known Fragilities
+- Vendor detection uses mobile-name token matching from nearby spawner-derived names; if a shop has nonstandard vendor naming, add/adjust token derivation rules.
+- Anchor moves are bounded; if shop interior requires multi-door traversal or atypical elevation transitions, goal may fail even when area route is otherwise reachable.
+- Adaptive settle waiting improves evaluation quality but increases per-attempt latency; tune `hop_wait_*` if total run time becomes excessive.

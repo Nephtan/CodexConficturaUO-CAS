@@ -85,6 +85,20 @@ def _safe_call(default_value, fn, *args):
         return default_value
 
 
+def _lower_text(value):
+    try:
+        return str(value).strip().lower()
+    except Exception:
+        return ""
+
+
+def _serial_hex(serial_value):
+    try:
+        return hex(int(serial_value))
+    except Exception:
+        return "0x0"
+
+
 def _copy_dict(source_dict):
     copied = {}
     if not isinstance(source_dict, dict):
@@ -139,6 +153,329 @@ def _merge_options(pathing_defaults, route_overrides, within_distance_override):
         merged["within_distance"] = _to_int(within_distance_override, _to_int(merged.get("within_distance", 1), 1))
 
     return merged
+
+
+def _invoke_mobile_selector(source_name, search_range):
+    selector = GetEnemy
+    alias_name = "enemy"
+
+    if source_name == "friend":
+        selector = GetFriend
+        alias_name = "friend"
+
+    attempts = [
+        (["Any"], "Any", "Next", "Any", search_range),
+        (["Any"], "Any", "Next", search_range),
+        (["Any"], "Next", search_range)
+    ]
+
+    last_error = None
+    idx = 0
+    while idx < len(attempts):
+        args = attempts[idx]
+        idx += 1
+
+        try:
+            found_mobile = selector(*args)
+            return (found_mobile, alias_name, "attempt_{0}".format(idx), None)
+        except Exception as ex:
+            last_error = ex
+
+    return (False, alias_name, "failed", str(last_error))
+
+
+def _scan_nearby_mobiles(state_name, search_range, max_scans):
+    rows = []
+    observed_name_set = {}
+    seen_serials = {}
+
+    sources = ["enemy", "friend"]
+    source_index = 0
+
+    while source_index < len(sources):
+        source_name = sources[source_index]
+        source_index += 1
+
+        try:
+            ClearIgnoreList()
+        except Exception:
+            pass
+
+        scan_index = 0
+        while scan_index < max_scans:
+            found_mobile, alias_name, signature_name, selector_error = _invoke_mobile_selector(source_name, search_range)
+
+            if selector_error is not None:
+                Telemetry.warn(state_name, "Shop goal selector failed", {
+                    "source": source_name,
+                    "signature": signature_name,
+                    "error": selector_error
+                })
+                break
+
+            if not found_mobile:
+                break
+
+            serial_value = _to_int(_safe_call(0, GetAlias, alias_name), 0)
+            if serial_value <= 0:
+                try:
+                    IgnoreObject(alias_name)
+                except Exception:
+                    pass
+                scan_index += 1
+                continue
+
+            if serial_value in seen_serials:
+                try:
+                    IgnoreObject(alias_name)
+                except Exception:
+                    pass
+                scan_index += 1
+                continue
+
+            seen_serials[serial_value] = True
+
+            name_text = _safe_call("", Name, alias_name)
+            lowered_name = _lower_text(name_text)
+            if len(lowered_name) > 0:
+                observed_name_set[lowered_name] = True
+
+            rows.append({
+                "serial": serial_value,
+                "serial_hex": _serial_hex(serial_value),
+                "name": name_text,
+                "x": _safe_call(0, X, alias_name),
+                "y": _safe_call(0, Y, alias_name),
+                "z": _safe_call(0, Z, alias_name),
+                "distance": _safe_call(-1, Distance, alias_name),
+                "source": source_name
+            })
+
+            try:
+                IgnoreObject(alias_name)
+            except Exception:
+                pass
+
+            try:
+                Pause(15)
+            except Exception:
+                pass
+
+            scan_index += 1
+
+        try:
+            ClearIgnoreList()
+        except Exception:
+            pass
+
+    observed_names = []
+    for name_key in observed_name_set.keys():
+        observed_names.append(name_key)
+
+    observed_names.sort()
+
+    return {
+        "rows": rows,
+        "observed_names": observed_names
+    }
+
+
+def _scan_vendor_matches(state_name, vendor_tokens, search_range, max_scans):
+    scan_result = _scan_nearby_mobiles(state_name, search_range, max_scans)
+    rows = scan_result.get("rows", [])
+
+    normalized_tokens = []
+    token_seen = {}
+    token_index = 0
+    while token_index < len(vendor_tokens):
+        token = _lower_text(vendor_tokens[token_index])
+        token_index += 1
+
+        if len(token) <= 0:
+            continue
+        if token in token_seen:
+            continue
+
+        token_seen[token] = True
+        normalized_tokens.append(token)
+
+    matches = []
+    row_index = 0
+    while row_index < len(rows):
+        row = rows[row_index]
+        row_index += 1
+
+        name_text = _lower_text(row.get("name", ""))
+        if len(name_text) <= 0:
+            continue
+
+        token_idx = 0
+        while token_idx < len(normalized_tokens):
+            token = normalized_tokens[token_idx]
+            token_idx += 1
+
+            if token in name_text:
+                matches.append(row)
+                break
+
+    matches.sort(key=lambda row: _to_int(row.get("distance", 9999), 9999))
+
+    return {
+        "matches": matches,
+        "observed_names": scan_result.get("observed_names", []),
+        "normalized_tokens": normalized_tokens,
+        "scanned_count": len(rows)
+    }
+
+
+def _build_shop_goal_options(route_options):
+    options = _copy_dict(route_options)
+
+    options["within_distance"] = _to_int(route_options.get("shop_goal_vendor_within_distance", 2), 2)
+    options["max_attempts"] = _to_int(route_options.get("shop_goal_max_attempts", 30), 30)
+    options["max_ms"] = _to_int(route_options.get("shop_goal_max_ms", 30000), 30000)
+
+    if _to_int(options.get("max_regression_from_best", 4), 4) < 2:
+        options["max_regression_from_best"] = 2
+    if _to_int(options.get("no_best_progress_tolerance", 20), 20) < 10:
+        options["no_best_progress_tolerance"] = 10
+
+    return options
+
+
+def _run_shop_visit_goal(ctx, state_name, route_row, route_options):
+    goal_enabled = _to_bool(route_options.get("shop_goal_enabled", False), False)
+    if not goal_enabled:
+        return {
+            "enabled": False,
+            "passed": True,
+            "reason": "disabled",
+            "observed_names": "",
+            "matched_vendor": "",
+            "matched_vendor_serial": "",
+            "anchors_attempted": 0
+        }
+
+    goal_name = str(route_options.get("shop_goal_name", route_row.get("name", "shop_goal")))
+    vendor_tokens = route_options.get("shop_goal_vendor_tokens", [])
+    anchor_points = route_options.get("shop_goal_vendor_anchor_points", [])
+    scan_range = _to_int(route_options.get("shop_goal_vendor_scan_range", 12), 12)
+    max_scans = _to_int(route_options.get("shop_goal_vendor_max_scans", 16), 16)
+    vendor_required = _to_bool(route_options.get("shop_goal_vendor_required", True), True)
+
+    if scan_range < 1:
+        scan_range = 1
+    if max_scans < 1:
+        max_scans = 1
+
+    Telemetry.info(state_name, "Shop goal preconditions", {
+        "shop_goal_name": goal_name,
+        "vendor_token_count": len(vendor_tokens),
+        "anchor_count": len(anchor_points),
+        "scan_range": scan_range,
+        "max_scans": max_scans,
+        "vendor_required": vendor_required
+    })
+
+    goal_options = _build_shop_goal_options(route_options)
+
+    initial_scan = _scan_vendor_matches(state_name, vendor_tokens, scan_range, max_scans)
+    observed_names = "|".join(initial_scan.get("observed_names", []))
+    matches = initial_scan.get("matches", [])
+
+    anchors_attempted = 0
+    vendor_target = None
+
+    if len(matches) > 0:
+        vendor_target = matches[0]
+    else:
+        anchor_index = 0
+        while anchor_index < len(anchor_points):
+            anchor = anchor_points[anchor_index]
+            anchor_index += 1
+
+            if not isinstance(anchor, tuple) or len(anchor) < 3:
+                continue
+
+            anchors_attempted += 1
+
+            Telemetry.info(state_name, "Shop goal anchor move", {
+                "shop_goal_name": goal_name,
+                "anchor_index": anchor_index,
+                "anchor_point": anchor
+            })
+
+            navigate_to_coordinate(ctx, state_name, anchor, goal_options)
+
+            post_scan = _scan_vendor_matches(state_name, vendor_tokens, scan_range, max_scans)
+            if len(post_scan.get("matches", [])) > 0:
+                vendor_target = post_scan.get("matches", [])[0]
+                observed_names = "|".join(post_scan.get("observed_names", []))
+                break
+
+            observed_names = "|".join(post_scan.get("observed_names", []))
+
+    if vendor_target is None:
+        if vendor_required:
+            return {
+                "enabled": True,
+                "passed": False,
+                "reason": "vendor_not_observed",
+                "observed_names": observed_names,
+                "matched_vendor": "",
+                "matched_vendor_serial": "",
+                "anchors_attempted": anchors_attempted
+            }
+
+        return {
+            "enabled": True,
+            "passed": True,
+            "reason": "vendor_optional_not_observed",
+            "observed_names": observed_names,
+            "matched_vendor": "",
+            "matched_vendor_serial": "",
+            "anchors_attempted": anchors_attempted
+        }
+
+    vendor_destination = (
+        _to_int(vendor_target.get("x", 0), 0),
+        _to_int(vendor_target.get("y", 0), 0),
+        _to_int(vendor_target.get("z", 0), 0)
+    )
+
+    Telemetry.info(state_name, "Shop goal vendor approach", {
+        "shop_goal_name": goal_name,
+        "vendor_name": vendor_target.get("name", ""),
+        "vendor_serial": vendor_target.get("serial_hex", "0x0"),
+        "vendor_distance": vendor_target.get("distance", -1),
+        "vendor_destination": vendor_destination
+    })
+
+    vendor_nav = navigate_to_coordinate(ctx, state_name, vendor_destination, goal_options)
+
+    goal_within_distance = _to_int(goal_options.get("within_distance", 2), 2)
+    vendor_reached = _to_bool(vendor_nav.get("success", False), False) and _to_int(vendor_nav.get("final_distance", 9999), 9999) <= goal_within_distance
+
+    if vendor_reached:
+        return {
+            "enabled": True,
+            "passed": True,
+            "reason": "vendor_reached",
+            "observed_names": observed_names,
+            "matched_vendor": vendor_target.get("name", ""),
+            "matched_vendor_serial": vendor_target.get("serial_hex", "0x0"),
+            "anchors_attempted": anchors_attempted
+        }
+
+    return {
+        "enabled": True,
+        "passed": False,
+        "reason": "vendor_path_failed_{0}".format(str(vendor_nav.get("stop_reason", "unknown"))),
+        "observed_names": observed_names,
+        "matched_vendor": vendor_target.get("name", ""),
+        "matched_vendor_serial": vendor_target.get("serial_hex", "0x0"),
+        "anchors_attempted": anchors_attempted
+    }
 
 
 def _route_copy_with_stage(route_row, stage_name):
@@ -430,6 +767,33 @@ class RunRouteState(State):
         allowed_negative_stop_reasons = harness_cfg.get("allowed_negative_stop_reasons", [])
 
         passed, pass_reason = _evaluate_route_result(route_row, result_row, allowed_negative_stop_reasons)
+        goal_type = str(route_row.get("goal_type", "none"))
+        goal_enabled = False
+        goal_passed = True
+        goal_reason = "not_applicable"
+        goal_vendor = ""
+        goal_vendor_serial = ""
+        goal_observed_names = ""
+        goal_anchors_attempted = 0
+
+        if _to_bool(options.get("shop_goal_enabled", False), False):
+            goal_enabled = True
+            if passed:
+                goal_result = _run_shop_visit_goal(ctx, self.key, route_row, options)
+                goal_enabled = _to_bool(goal_result.get("enabled", False), False)
+                goal_passed = _to_bool(goal_result.get("passed", False), False)
+                goal_reason = str(goal_result.get("reason", "unknown"))
+                goal_vendor = str(goal_result.get("matched_vendor", ""))
+                goal_vendor_serial = str(goal_result.get("matched_vendor_serial", ""))
+                goal_observed_names = str(goal_result.get("observed_names", ""))
+                goal_anchors_attempted = _to_int(goal_result.get("anchors_attempted", 0), 0)
+
+                if goal_enabled and not goal_passed:
+                    passed = False
+                    pass_reason = "shop_goal_failed_{0}".format(goal_reason)
+            else:
+                goal_passed = False
+                goal_reason = "skipped_route_failed"
 
         evidence = result_row.get("evidence", {})
         report_row = {
@@ -449,7 +813,15 @@ class RunRouteState(State):
             "final_distance": result_row.get("final_distance", -1),
             "best_distance": evidence.get("best_distance", -1),
             "candidate_order_last": evidence.get("candidate_order_last", ""),
-            "candidate_results_last": evidence.get("candidate_results_last", "")
+            "candidate_results_last": evidence.get("candidate_results_last", ""),
+            "goal_type": goal_type,
+            "goal_enabled": goal_enabled,
+            "goal_passed": goal_passed,
+            "goal_reason": goal_reason,
+            "goal_vendor": goal_vendor,
+            "goal_vendor_serial": goal_vendor_serial,
+            "goal_observed_names": goal_observed_names,
+            "goal_anchors_attempted": goal_anchors_attempted
         }
 
         ctx.route_reports.append(report_row)
@@ -470,7 +842,14 @@ class RunRouteState(State):
             "stop_reason": report_row["stop_reason"],
             "attempts": report_row["attempts"],
             "elapsed_ms": report_row["elapsed_ms"],
-            "final_distance": report_row["final_distance"]
+            "final_distance": report_row["final_distance"],
+            "goal_type": report_row["goal_type"],
+            "goal_enabled": report_row["goal_enabled"],
+            "goal_passed": report_row["goal_passed"],
+            "goal_reason": report_row["goal_reason"],
+            "goal_vendor": report_row["goal_vendor"],
+            "goal_vendor_serial": report_row["goal_vendor_serial"],
+            "goal_anchors_attempted": report_row["goal_anchors_attempted"]
         })
 
         ctx.route_index = route_index + 1

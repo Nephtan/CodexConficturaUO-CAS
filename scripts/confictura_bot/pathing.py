@@ -152,7 +152,16 @@ def _normalize_options(options):
         "near_target_distance": _to_int(options.get("near_target_distance", 6), 6),
         "near_target_stall_tolerance": _to_int(options.get("near_target_stall_tolerance", 2), 2),
         "max_regression_from_best": _to_int(options.get("max_regression_from_best", 3), 3),
-        "no_best_progress_tolerance": _to_int(options.get("no_best_progress_tolerance", 12), 12)
+        "no_best_progress_tolerance": _to_int(options.get("no_best_progress_tolerance", 12), 12),
+        "hop_wait_per_tile_ms": _to_int(options.get("hop_wait_per_tile_ms", 220), 220),
+        "hop_wait_min_ms": _to_int(options.get("hop_wait_min_ms", 700), 700),
+        "hop_wait_max_ms": _to_int(options.get("hop_wait_max_ms", 2600), 2600),
+        "hop_wait_poll_ms": _to_int(options.get("hop_wait_poll_ms", 100), 100),
+        "hop_wait_stable_polls": _to_int(options.get("hop_wait_stable_polls", 3), 3),
+        "hop_wait_candidate_within": _to_int(options.get("hop_wait_candidate_within", 1), 1),
+        "hop_awareness_enabled": _to_bool(options.get("hop_awareness_enabled", True), True),
+        "hop_awareness_range": _to_int(options.get("hop_awareness_range", 8), 8),
+        "hop_awareness_max_entities": _to_int(options.get("hop_awareness_max_entities", 10), 10)
     }
 
     if normalized["within_distance"] < 0:
@@ -205,6 +214,22 @@ def _normalize_options(options):
         normalized["max_regression_from_best"] = 0
     if normalized["no_best_progress_tolerance"] < 1:
         normalized["no_best_progress_tolerance"] = 1
+    if normalized["hop_wait_per_tile_ms"] < 0:
+        normalized["hop_wait_per_tile_ms"] = 0
+    if normalized["hop_wait_min_ms"] < 0:
+        normalized["hop_wait_min_ms"] = 0
+    if normalized["hop_wait_max_ms"] < normalized["hop_wait_min_ms"]:
+        normalized["hop_wait_max_ms"] = normalized["hop_wait_min_ms"]
+    if normalized["hop_wait_poll_ms"] < 50:
+        normalized["hop_wait_poll_ms"] = 50
+    if normalized["hop_wait_stable_polls"] < 1:
+        normalized["hop_wait_stable_polls"] = 1
+    if normalized["hop_wait_candidate_within"] < 0:
+        normalized["hop_wait_candidate_within"] = 0
+    if normalized["hop_awareness_range"] < 1:
+        normalized["hop_awareness_range"] = 1
+    if normalized["hop_awareness_max_entities"] < 1:
+        normalized["hop_awareness_max_entities"] = 1
 
     if normalized["max_hop_distance"] > normalized["client_pathfind_max_distance"]:
         normalized["max_hop_distance"] = normalized["client_pathfind_max_distance"]
@@ -427,6 +452,208 @@ def _append_recent_point(history_points, point, max_window):
         history_points.pop(0)
 
 
+def _invoke_get_enemy_any(scan_range):
+    attempts = [
+        (["Any"], "Any", "Next", "Any", scan_range),
+        (["Any"], "Any", "Next", scan_range),
+        (["Any"], "Next", scan_range)
+    ]
+
+    idx = 0
+    while idx < len(attempts):
+        args = attempts[idx]
+        idx += 1
+
+        try:
+            return GetEnemy(*args)
+        except Exception:
+            continue
+
+    return False
+
+
+def _quick_mobile_awareness_scan(scan_range, max_entities):
+    rows = []
+    seen_serials = {}
+    sample_names = {}
+
+    try:
+        ClearIgnoreList()
+    except Exception:
+        pass
+
+    idx = 0
+    while idx < max_entities:
+        found_mobile = _invoke_get_enemy_any(scan_range)
+        if not found_mobile:
+            break
+
+        serial_value = _to_int(_safe_call(0, GetAlias, "enemy"), 0)
+        if serial_value <= 0:
+            break
+
+        if serial_value in seen_serials:
+            try:
+                IgnoreObject("enemy")
+            except Exception:
+                pass
+            idx += 1
+            continue
+
+        seen_serials[serial_value] = True
+
+        name_text = _safe_call("", Name, "enemy")
+        distance_value = _to_int(_safe_call(-1, Distance, "enemy"), -1)
+
+        rows.append({
+            "serial": serial_value,
+            "name": name_text,
+            "distance": distance_value
+        })
+
+        lowered_name = ""
+        try:
+            lowered_name = str(name_text).strip().lower()
+        except Exception:
+            lowered_name = ""
+
+        if len(lowered_name) > 0 and lowered_name not in sample_names:
+            sample_names[lowered_name] = True
+
+        try:
+            IgnoreObject("enemy")
+        except Exception:
+            pass
+
+        try:
+            Pause(10)
+        except Exception:
+            pass
+
+        idx += 1
+
+    try:
+        ClearIgnoreList()
+    except Exception:
+        pass
+
+    sample = []
+    for name_key in sample_names.keys():
+        sample.append(name_key)
+
+    sample.sort()
+    if len(sample) > 6:
+        sample = sample[:6]
+
+    return {
+        "rows": rows,
+        "sample_names": sample
+    }
+
+
+def _estimate_hop_wait_budget_ms(current_point, candidate_point, opts):
+    candidate_distance = _distance_between(current_point, candidate_point)
+    per_tile_ms = _to_int(opts.get("hop_wait_per_tile_ms", 220), 220)
+    min_wait_ms = _to_int(opts.get("hop_wait_min_ms", 700), 700)
+    max_wait_ms = _to_int(opts.get("hop_wait_max_ms", 2600), 2600)
+
+    wait_budget = min_wait_ms + (candidate_distance * per_tile_ms)
+
+    if wait_budget < min_wait_ms:
+        wait_budget = min_wait_ms
+    if wait_budget > max_wait_ms:
+        wait_budget = max_wait_ms
+
+    return wait_budget
+
+
+def _wait_for_hop_settle(state_name, candidate_point, destination_point, wait_budget_ms, poll_ms, stable_polls, candidate_within):
+    wait_budget = _to_int(wait_budget_ms, 0)
+    poll = _to_int(poll_ms, 100)
+    stable_target = _to_int(stable_polls, 3)
+    candidate_stop = _to_int(candidate_within, 1)
+
+    if poll < 50:
+        poll = 50
+    if stable_target < 1:
+        stable_target = 1
+    if candidate_stop < 0:
+        candidate_stop = 0
+    if wait_budget <= 0:
+        wait_budget = poll
+
+    elapsed = 0
+    polls = 0
+    stable_count = 0
+    moved_polls = 0
+    startup_wait_ms = poll * 2
+
+    start_point = _point_from_snapshot(_snapshot_self())
+    last_point = start_point
+    best_candidate_distance = _distance_between(start_point, candidate_point)
+    final_destination_distance = _distance_between(start_point, destination_point)
+    final_candidate_distance = best_candidate_distance
+    reason = "budget_exhausted"
+
+    while elapsed < wait_budget:
+        try:
+            Pause(poll)
+        except Exception as ex:
+            return {
+                "ok": False,
+                "elapsed_ms": elapsed,
+                "polls": polls,
+                "stable_count": stable_count,
+                "moved_polls": moved_polls,
+                "reason": "pause_unavailable",
+                "exception": str(ex),
+                "best_candidate_distance": best_candidate_distance,
+                "final_candidate_distance": final_candidate_distance,
+                "final_destination_distance": final_destination_distance
+            }
+
+        elapsed += poll
+        polls += 1
+
+        current_point = _point_from_snapshot(_snapshot_self())
+
+        if current_point != last_point:
+            moved_polls += 1
+            stable_count = 0
+        else:
+            stable_count += 1
+
+        final_candidate_distance = _distance_between(current_point, candidate_point)
+        final_destination_distance = _distance_between(current_point, destination_point)
+
+        if final_candidate_distance < best_candidate_distance:
+            best_candidate_distance = final_candidate_distance
+
+        if final_candidate_distance <= candidate_stop:
+            reason = "candidate_reached"
+            last_point = current_point
+            break
+
+        if stable_count >= stable_target and elapsed >= startup_wait_ms:
+            reason = "movement_settled"
+            last_point = current_point
+            break
+
+        last_point = current_point
+
+    return {
+        "ok": True,
+        "elapsed_ms": elapsed,
+        "polls": polls,
+        "stable_count": stable_count,
+        "moved_polls": moved_polls,
+        "reason": reason,
+        "best_candidate_distance": best_candidate_distance,
+        "final_candidate_distance": final_candidate_distance,
+        "final_destination_distance": final_destination_distance
+    }
+
+
 def _pathfinding_active_or_none(state_name):
     global _PATHFINDING_UNAVAILABLE_LOGGED
 
@@ -586,7 +813,16 @@ def navigate_to_coordinate(ctx, state_name, destination, options):
         "near_target_distance": opts["near_target_distance"],
         "near_target_stall_tolerance": opts["near_target_stall_tolerance"],
         "max_regression_from_best": opts["max_regression_from_best"],
-        "no_best_progress_tolerance": opts["no_best_progress_tolerance"]
+        "no_best_progress_tolerance": opts["no_best_progress_tolerance"],
+        "hop_wait_per_tile_ms": opts["hop_wait_per_tile_ms"],
+        "hop_wait_min_ms": opts["hop_wait_min_ms"],
+        "hop_wait_max_ms": opts["hop_wait_max_ms"],
+        "hop_wait_poll_ms": opts["hop_wait_poll_ms"],
+        "hop_wait_stable_polls": opts["hop_wait_stable_polls"],
+        "hop_wait_candidate_within": opts["hop_wait_candidate_within"],
+        "hop_awareness_enabled": opts["hop_awareness_enabled"],
+        "hop_awareness_range": opts["hop_awareness_range"],
+        "hop_awareness_max_entities": opts["hop_awareness_max_entities"]
     })
 
     if initial_distance <= opts["within_distance"]:
@@ -662,6 +898,27 @@ def navigate_to_coordinate(ctx, state_name, destination, options):
             candidate_order.append("{0}:{1},{2},{3}".format(label, point[0], point[1], point[2]))
             idx += 1
 
+        awareness_mobile_count = 0
+        awareness_nearby_count = 0
+        awareness_sample = ""
+
+        if opts["hop_awareness_enabled"] and stall_count > 0:
+            awareness_result = _quick_mobile_awareness_scan(
+                opts["hop_awareness_range"],
+                opts["hop_awareness_max_entities"]
+            )
+
+            awareness_rows = awareness_result.get("rows", [])
+            awareness_mobile_count = len(awareness_rows)
+
+            awareness_index = 0
+            while awareness_index < len(awareness_rows):
+                if _to_int(awareness_rows[awareness_index].get("distance", -1), -1) <= 1:
+                    awareness_nearby_count += 1
+                awareness_index += 1
+
+            awareness_sample = "|".join(awareness_result.get("sample_names", []))
+
         attempts += 1
 
         Telemetry.debug(state_name, "Pathing attempt", {
@@ -677,7 +934,10 @@ def navigate_to_coordinate(ctx, state_name, destination, options):
             "best_distance": evidence["best_distance"],
             "attempts_since_best": attempts_since_best,
             "max_regression_from_best": opts["max_regression_from_best"],
-            "no_best_progress_tolerance": opts["no_best_progress_tolerance"]
+            "no_best_progress_tolerance": opts["no_best_progress_tolerance"],
+            "awareness_mobile_count": awareness_mobile_count,
+            "awareness_nearby_count": awareness_nearby_count,
+            "awareness_sample": awareness_sample
         })
 
         progressed = False
@@ -693,6 +953,8 @@ def navigate_to_coordinate(ctx, state_name, destination, options):
         selected_forced = False
         selected_regression_from_best = 0
         selected_new_best = False
+        selected_hop_wait_reason = ""
+        selected_hop_wait_elapsed_ms = 0
 
         selected_row = None
         idx = 0
@@ -739,6 +1001,12 @@ def navigate_to_coordinate(ctx, state_name, destination, options):
             pathfind_ok = False
             exception_text = ""
             cancelled_active_pathfind = False
+            hop_wait_budget_ms = _estimate_hop_wait_budget_ms(current_point, candidate_point, opts)
+            hop_wait_elapsed_ms = 0
+            hop_wait_reason = "not_waited"
+            hop_wait_candidate_distance = -1
+            hop_wait_moved_polls = 0
+            hop_wait_result = {}
 
             if opts["cancel_active_pathfind"]:
                 cancelled_active_pathfind = _cancel_active_pathfind(ctx, state_name, opts["pathfinding_poll_ms"])
@@ -758,7 +1026,35 @@ def navigate_to_coordinate(ctx, state_name, destination, options):
             if not _wait_for_pathfinding_idle(ctx, state_name, opts["pathfinding_wait_ms"], opts["pathfinding_poll_ms"]):
                 pause_unavailable = True
 
-            after_distance = _distance_between(_point_from_snapshot(_snapshot_self()), destination_point)
+            if not pause_unavailable:
+                hop_wait_result = _wait_for_hop_settle(
+                    state_name,
+                    candidate_point,
+                    destination_point,
+                    hop_wait_budget_ms,
+                    opts["hop_wait_poll_ms"],
+                    opts["hop_wait_stable_polls"],
+                    opts["hop_wait_candidate_within"]
+                )
+
+                hop_wait_elapsed_ms = _to_int(hop_wait_result.get("elapsed_ms", 0), 0)
+                hop_wait_reason = str(hop_wait_result.get("reason", ""))
+                hop_wait_candidate_distance = _to_int(hop_wait_result.get("final_candidate_distance", -1), -1)
+                hop_wait_moved_polls = _to_int(hop_wait_result.get("moved_polls", 0), 0)
+
+                if not hop_wait_result.get("ok", True):
+                    pause_unavailable = True
+                    if len(exception_text) <= 0:
+                        wait_ex = hop_wait_result.get("exception", "")
+                        if len(wait_ex) > 0:
+                            exception_text = str(wait_ex)
+
+            if pause_unavailable:
+                after_distance = _distance_between(_point_from_snapshot(_snapshot_self()), destination_point)
+            else:
+                fallback_after_distance = _distance_between(_point_from_snapshot(_snapshot_self()), destination_point)
+                after_distance = _to_int(hop_wait_result.get("final_destination_distance", fallback_after_distance), fallback_after_distance)
+
             candidate_progress_delta = before_distance - after_distance
             attempt_progress_delta = attempt_start_distance - after_distance
             best_distance_before = evidence["best_distance"]
@@ -768,6 +1064,8 @@ def navigate_to_coordinate(ctx, state_name, destination, options):
             if after_distance < best_distance_before:
                 evidence["best_distance"] = after_distance
                 made_new_best = True
+                attempts_since_best = 0
+            elif after_distance == best_distance_before:
                 attempts_since_best = 0
             else:
                 attempts_since_best += 1
@@ -779,7 +1077,7 @@ def navigate_to_coordinate(ctx, state_name, destination, options):
                 within_regression_guard
             )
 
-            row_text = "{0}:{1},{2},{3}:ok={4}:before={5}:after={6}:candidate_progress={7}:attempt_progress={8}:repeat_count={9}:best_distance_before={10}:regression_from_best={11}:new_best={12}".format(
+            row_text = "{0}:{1},{2},{3}:ok={4}:before={5}:after={6}:candidate_progress={7}:attempt_progress={8}:repeat_count={9}:best_distance_before={10}:regression_from_best={11}:new_best={12}:hop_wait_budget_ms={13}:hop_wait_elapsed_ms={14}:hop_wait_reason={15}:hop_wait_candidate_distance={16}:hop_wait_moved_polls={17}".format(
                 selected_label,
                 candidate_point[0],
                 candidate_point[1],
@@ -792,7 +1090,12 @@ def navigate_to_coordinate(ctx, state_name, destination, options):
                 selected_repeat_count,
                 best_distance_before,
                 regression_from_best,
-                made_new_best
+                made_new_best,
+                hop_wait_budget_ms,
+                hop_wait_elapsed_ms,
+                hop_wait_reason,
+                hop_wait_candidate_distance,
+                hop_wait_moved_polls
             )
 
             if selected_forced:
@@ -818,6 +1121,8 @@ def navigate_to_coordinate(ctx, state_name, destination, options):
                 selected_candidate_progress = candidate_progress_delta
                 selected_regression_from_best = regression_from_best
                 selected_new_best = made_new_best
+                selected_hop_wait_reason = hop_wait_reason
+                selected_hop_wait_elapsed_ms = hop_wait_elapsed_ms
         else:
             attempts_since_best += 1
             candidate_rows.append("none:selected=False:reason=no_candidate_available")
@@ -834,6 +1139,8 @@ def navigate_to_coordinate(ctx, state_name, destination, options):
             "hop_size": hop_size,
             "stall_count_before": stall_count,
             "attempts_since_best": attempts_since_best,
+            "awareness_mobile_count": awareness_mobile_count,
+            "awareness_nearby_count": awareness_nearby_count,
             "candidate_order": evidence["candidate_order_last"],
             "candidate_results": evidence["candidate_results_last"]
         }
@@ -880,7 +1187,9 @@ def navigate_to_coordinate(ctx, state_name, destination, options):
                 "best_distance": evidence["best_distance"],
                 "regression_from_best": selected_regression_from_best,
                 "attempts_since_best": attempts_since_best,
-                "new_best": selected_new_best
+                "new_best": selected_new_best,
+                "hop_wait_reason": selected_hop_wait_reason,
+                "hop_wait_elapsed_ms": selected_hop_wait_elapsed_ms
             })
             continue
 
